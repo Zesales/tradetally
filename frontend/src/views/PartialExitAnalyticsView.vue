@@ -73,7 +73,7 @@
           <div class="text-sm text-gray-600 dark:text-gray-400">Trades Analyzed</div>
         </div>
         <div class="card p-4 text-center">
-          <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ analytics.max_partials }}</div>
+        <div class="text-2xl font-bold text-gray-900 dark:text-white">{{ analytics.max_partials }}</div>
           <div class="text-sm text-gray-600 dark:text-gray-400">Max Partial Levels</div>
         </div>
         <div class="card p-4 text-center">
