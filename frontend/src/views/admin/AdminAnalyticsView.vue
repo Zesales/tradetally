@@ -37,9 +37,14 @@
                             :class="activeConnections > 0 ? 'bg-green-500' : 'bg-gray-400'"
                         ></span>
                     </span>
-                    <p class="text-lg font-semibold text-gray-900 dark:text-white leading-tight">
-                        {{ activeConnections }}
-                    </p>
+                    <div class="text-right">
+                        <p class="text-lg font-semibold text-gray-900 dark:text-white leading-tight">
+                            {{ activeConnections }}
+                        </p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400">
+                            Connected now
+                        </p>
+                    </div>
                 </div>
             </div>
         </div>
