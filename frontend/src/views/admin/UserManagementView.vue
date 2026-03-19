@@ -39,7 +39,6 @@
                     <span class="text-xs text-gray-600 dark:text-gray-400">Updating...</span>
                 </div>
             </div>
-
             <!-- Filters & Table Card -->
             <div class="card">
                 <!-- Filters -->
