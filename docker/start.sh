@@ -34,8 +34,8 @@ inject_analytics
 # Wait for database to be ready
 echo "[WAIT] Waiting for database connection..."
 until nc -z "${DB_HOST:-postgres}" "${DB_PORT:-5432}"; do
-  echo "   Database not ready, waiting..."
-  sleep 2
+    echo "   Database not ready, waiting..."
+    sleep 2
 done
 echo "[OK] Database connection established"
 
@@ -45,12 +45,14 @@ export RUN_MIGRATIONS="${RUN_MIGRATIONS:-true}"
 # Start backend as non-root user (migrations will run automatically)
 echo "[START] Starting TradeTally backend..."
 
-cd /app/backend || exit 1
-
 if [ "$NODE_ENV" = "development" ]; then
-  su-exec appuser npm run dev &
+    cd /app/backend || exit 1
+    su-exec appuser npm run dev &
+    cd /app/frontend || exit 1
+    su-exec appuser npm run dev &
 else
-  su-exec appuser node src/server.js &
+    cd /app/backend || exit 1
+    su-exec appuser node src/server.js &
 fi
 
 # Wait for backend to start
