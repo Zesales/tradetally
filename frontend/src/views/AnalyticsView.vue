@@ -3284,6 +3284,9 @@ async function loadData() {
         let startDate = ''
 
         switch (savedPeriod) {
+          case 'today':
+            startDate = today
+            break
           case '7d': {
             const start = new Date(now)
             start.setDate(start.getDate() - 7)
