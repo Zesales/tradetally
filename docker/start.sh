@@ -16,8 +16,10 @@ echo "[START] Starting TradeTally backend..."
 
 if [ "$NODE_ENV" = "development" ]; then
     cd /app/backend || exit 1
+    su-exec appuser npm install --install-dev
     su-exec appuser npm run dev &
     cd /app/frontend || exit 1
+    su-exec appuser npm install --install-dev
     su-exec appuser npm run dev &
 else
     cd /app/backend || exit 1
