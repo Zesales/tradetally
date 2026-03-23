@@ -216,7 +216,8 @@ export const useBrokerSyncStore = defineStore('brokerSync', () => {
     try {
       const response = await api.post(`/broker-sync/connections/${connectionId}/sync`, {
         startDate: options.startDate,
-        endDate: options.endDate
+        endDate: options.endDate,
+        forceFullSync: options.forceFullSync === true
       })
 
       return response.data

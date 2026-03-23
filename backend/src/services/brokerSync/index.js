@@ -26,7 +26,7 @@ class BrokerSyncService {
    * @param {object} options - Sync options
    */
   async syncConnection(connectionId, options = {}) {
-    const { syncType = 'manual', startDate, endDate } = options;
+    const { syncType = 'manual', startDate, endDate, forceFullSync = false } = options;
 
     // Get connection with credentials
     const connection = await BrokerConnection.findById(connectionId, true);
@@ -56,6 +56,7 @@ class BrokerSyncService {
           result = await ibkrService.syncTrades(connection, {
             startDate,
             endDate,
+            forceFullSync,
             syncLogId: syncLog.id
           });
           break;
@@ -64,6 +65,7 @@ class BrokerSyncService {
           result = await schwabService.syncTrades(connection, {
             startDate,
             endDate,
+            forceFullSync,
             syncLogId: syncLog.id
           });
           break;
@@ -72,6 +74,7 @@ class BrokerSyncService {
           result = await bitunixService.syncTrades(connection, {
             startDate,
             endDate,
+            forceFullSync,
             syncLogId: syncLog.id
           });
           break;

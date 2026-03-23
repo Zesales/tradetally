@@ -22,6 +22,7 @@ const FUNDING_HISTORY_START_DATE = '2020-01-01T00:00:00.000Z';
 const PAGE_SIZE = 100;
 const OPEN_POSITION_RETRY_DELAY_MS = 2500;
 const OPEN_POSITION_HISTORY_LOOKBACK_DAYS = 365;
+const INCREMENTAL_SYNC_LOOKBACK_MS = 60 * 60 * 1000;
 const STABLECOIN_TO_CURRENCY = {
   USDT: 'USD',
   USDC: 'USD',
@@ -120,6 +121,72 @@ class BitunixService {
     }
   }
 
+  toBitunixTimestamp(value, { endOfDay = false } = {}) {
+    if (!value) {
+      return null;
+    }
+
+    if (value instanceof Date) {
+      return value.getTime();
+    }
+
+    const normalizedValue = String(value).trim();
+    if (!normalizedValue) {
+      return null;
+    }
+
+    const hasExplicitTime = normalizedValue.includes('T') || /\d{2}:\d{2}/.test(normalizedValue);
+    const dateValue = hasExplicitTime
+      ? new Date(normalizedValue)
+      : new Date(`${normalizedValue}${endOfDay ? 'T23:59:59.999Z' : 'T00:00:00.000Z'}`);
+
+    if (Number.isNaN(dateValue.getTime())) {
+      return null;
+    }
+
+    return dateValue.getTime();
+  }
+
+  resolveSyncWindow(connection, options = {}) {
+    const {
+      startDate,
+      endDate,
+      forceFullSync = false
+    } = options;
+
+    if (forceFullSync) {
+      return {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        mode: 'full'
+      };
+    }
+
+    if (startDate || endDate) {
+      return {
+        startDate: startDate || null,
+        endDate: endDate || null,
+        mode: 'custom'
+      };
+    }
+
+    const lastSyncAt = connection?.lastSyncAt ? new Date(connection.lastSyncAt) : null;
+    if (!lastSyncAt || Number.isNaN(lastSyncAt.getTime())) {
+      return {
+        startDate: null,
+        endDate: null,
+        mode: 'full'
+      };
+    }
+
+    const lookbackStart = new Date(Math.max(lastSyncAt.getTime() - INCREMENTAL_SYNC_LOOKBACK_MS, 0));
+    return {
+      startDate: lookbackStart.toISOString(),
+      endDate: null,
+      mode: 'incremental'
+    };
+  }
+
   async getHistoryPositions(apiKey, apiSecret, { startDate, endDate } = {}) {
     const positions = [];
     let skip = 0;
@@ -131,11 +198,13 @@ class BitunixService {
         limit: PAGE_SIZE
       };
 
-      if (startDate) {
-        query.startTime = new Date(`${startDate}T00:00:00.000Z`).getTime();
+      const startTime = this.toBitunixTimestamp(startDate);
+      const endTime = this.toBitunixTimestamp(endDate, { endOfDay: true });
+      if (startTime) {
+        query.startTime = startTime;
       }
-      if (endDate) {
-        query.endTime = new Date(`${endDate}T23:59:59.999Z`).getTime();
+      if (endTime) {
+        query.endTime = endTime;
       }
 
       const result = await this.request({
@@ -230,8 +299,8 @@ class BitunixService {
   async getHistoryTrades(apiKey, apiSecret, { startDate, endDate, symbol, positionId } = {}) {
     const trades = [];
     const seen = new Set();
-    const startTime = startDate ? new Date(`${startDate}T00:00:00.000Z`).getTime() : null;
-    let cursorEndTime = endDate ? new Date(`${endDate}T23:59:59.999Z`).getTime() : Date.now();
+    const startTime = this.toBitunixTimestamp(startDate);
+    let cursorEndTime = this.toBitunixTimestamp(endDate, { endOfDay: true }) || Date.now();
     let previousOldestTime = null;
 
     for (let windowIndex = 0; windowIndex < 50; windowIndex++) {
@@ -1771,12 +1840,27 @@ class BitunixService {
   }
 
   async syncTrades(connection, options = {}) {
-    const { startDate, endDate, syncLogId } = options;
+    const { syncLogId } = options;
     const marginCoin = String(connection.bitunixMarginCoin || DEFAULT_MARGIN_COIN).toUpperCase();
+    const syncWindow = this.resolveSyncWindow(connection, options);
+    const { startDate, endDate, mode } = syncWindow;
 
     if (syncLogId) {
-      await BrokerConnection.updateSyncLog(syncLogId, 'fetching');
+      await BrokerConnection.updateSyncLog(syncLogId, 'fetching', {
+        syncDetails: {
+          mode,
+          resolvedStartDate: startDate,
+          resolvedEndDate: endDate,
+          incrementalLookbackMinutes: mode === 'incremental' ? 60 : null
+        }
+      });
     }
+
+    console.log(`[BITUNIX] Starting ${mode} trade sync`, {
+      connectionId: connection.id,
+      startDate,
+      endDate
+    });
 
     const pendingPositions = await this.getPendingPositions(connection.bitunixApiKey, connection.bitunixApiSecret);
     const [{ effectiveHistoryStartDate, historyTrades }, historyPositions, pendingOrders, pendingTpSlOrders] = await Promise.all([

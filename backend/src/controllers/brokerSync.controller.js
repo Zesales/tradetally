@@ -491,7 +491,7 @@ const brokerSyncController = {
     try {
       const userId = req.user.id;
       const { id } = req.params;
-      const { startDate, endDate } = req.body;
+      const { startDate, endDate, forceFullSync = false } = req.body;
 
       // Verify ownership and get connection with credentials
       const connection = await BrokerConnection.findById(id, true);
@@ -519,7 +519,8 @@ const brokerSyncController = {
           const result = await brokerSyncService.syncConnection(id, {
             syncType: 'manual',
             startDate,
-            endDate
+            endDate,
+            forceFullSync
           });
 
           console.log(`[BROKER-SYNC] Sync completed for connection ${id}: ${result.imported || 0} imported`);
