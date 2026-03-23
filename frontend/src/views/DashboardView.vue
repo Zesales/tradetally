@@ -504,9 +504,13 @@
               >
                 <div class="space-y-2">
                   <div v-for="detail in getOpenPositionDetailRows(position)" :key="detail.id"
-                       class="flex justify-between items-center text-sm bg-gray-50 dark:bg-gray-900 rounded px-3 py-2">
+                       class="flex justify-between items-center text-sm rounded px-3 py-2 border-l-2"
+                       :class="getOpenPositionDetailRowClass(detail)">
                     <div class="flex items-center space-x-2">
-                      <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ detail.label }}</span>
+                      <span class="text-xs font-semibold"
+                        :class="detail.type === 'exit' ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'">
+                        {{ detail.label }}
+                      </span>
                       <span class="px-1.5 text-xs leading-4 font-medium rounded"
                         :class="[
                           detail.side === 'long'
@@ -515,8 +519,11 @@
                         ]">
                         {{ detail.side }}
                       </span>
-                      <span class="text-xs text-gray-600 dark:text-gray-400">
+                      <span class="text-xs"
+                        :class="detail.type === 'exit' ? 'text-red-500 dark:text-red-400 font-semibold' : 'text-emerald-600 dark:text-emerald-400 font-semibold'">
                         {{ formatSignedPositionQuantity(detail.signedQuantity, position) }}
+                      </span>
+                      <span class="text-xs text-gray-600 dark:text-gray-400">
                         <template v-if="detail.price !== null">
                           @ ${{ formatCurrency(detail.price) }}
                         </template>
@@ -733,10 +740,14 @@
                     v-for="detail in getOpenPositionDetailRows(position)"
                     :key="detail.id"
                     class="hover:bg-gray-50 dark:hover:bg-gray-800"
+                    :class="getOpenPositionDetailTableRowClass(detail)"
                   >
                     <td class="px-3 py-2 text-sm text-gray-500 dark:text-gray-400 pl-6">
                       <span class="text-xs">└─</span>
-                      <span class="ml-1">{{ detail.label }}</span>
+                      <span class="ml-1 font-semibold"
+                        :class="detail.type === 'exit' ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'">
+                        {{ detail.label }}
+                      </span>
                     </td>
                     <td class="px-3 py-2 text-sm">
                       <span class="px-1.5 inline-flex text-xs leading-4 font-medium rounded"
@@ -748,8 +759,9 @@
                         {{ detail.side }}
                       </span>
                     </td>
-                    <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 text-right">
-                      {{ formatPositionQuantity(detail.quantity || 0, position) }}
+                    <td class="px-3 py-2 text-sm text-right font-semibold"
+                      :class="detail.type === 'exit' ? 'text-red-500 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'">
+                      {{ formatSignedPositionQuantity(detail.signedQuantity, position) }}
                     </td>
                     <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 text-right">
                       <span v-if="detail.runningQuantity !== null">
@@ -1491,6 +1503,18 @@ function getOpenPositionDetailSummary(position) {
   }
 
   return `${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}, ${exitCount} ${exitCount === 1 ? 'exit' : 'exits'}`
+}
+
+function getOpenPositionDetailRowClass(detail) {
+  return detail?.type === 'exit'
+    ? 'border-red-400/90 bg-red-50/15 dark:border-red-500/80 dark:bg-red-950/10'
+    : 'border-emerald-400/90 bg-emerald-50/15 dark:border-emerald-500/80 dark:bg-emerald-950/10'
+}
+
+function getOpenPositionDetailTableRowClass(detail) {
+  return detail?.type === 'exit'
+    ? 'bg-red-50/8 dark:bg-red-950/8'
+    : 'bg-emerald-50/8 dark:bg-emerald-950/8'
 }
 
 function formatSignedPositionQuantity(quantity, position) {

@@ -195,9 +195,9 @@ const brokerSyncController = {
       const normalizedApiKey = api_key;
       const normalizedApiSecret = api_secret;
       const normalizedMarginCoinInput = margin_coin || 'USDT';
-      const normalizedAutoSyncEnabled = auto_sync_enabled ?? false;
-      const normalizedSyncFrequency = sync_frequency || 'daily';
-      const normalizedSyncTime = sync_time || '06:00:00';
+      const normalizedAutoSyncEnabled = true;
+      const normalizedSyncFrequency = 'daily';
+      const normalizedSyncTime = '06:00:00';
 
       if (!normalizedApiKey || !normalizedApiSecret) {
         return res.status(400).json({
@@ -423,18 +423,30 @@ const brokerSyncController = {
         });
       }
 
+      const normalizedUpdates = connection.brokerType === 'bitunix'
+        ? {
+            autoSyncEnabled: true,
+            syncFrequency: 'daily',
+            syncTime: '06:00:00'
+          }
+        : {
+            autoSyncEnabled,
+            syncFrequency,
+            syncTime
+          };
+
       // Update settings
-      const updated = await BrokerConnection.update(id, {
-        autoSyncEnabled,
-        syncFrequency,
-        syncTime
-      });
+      const updated = await BrokerConnection.update(id, normalizedUpdates);
 
       // Recalculate next sync time
-      if (autoSyncEnabled && syncFrequency !== 'manual') {
+      const effectiveAutoSyncEnabled = connection.brokerType === 'bitunix' ? true : autoSyncEnabled;
+      const effectiveSyncFrequency = connection.brokerType === 'bitunix' ? 'daily' : (syncFrequency || connection.syncFrequency);
+      const effectiveSyncTime = connection.brokerType === 'bitunix' ? '06:00:00' : (syncTime || connection.syncTime);
+
+      if (effectiveAutoSyncEnabled && effectiveSyncFrequency !== 'manual') {
         const nextSync = BrokerConnection.calculateNextSync(
-          syncFrequency || connection.syncFrequency,
-          syncTime || connection.syncTime
+          effectiveSyncFrequency,
+          effectiveSyncTime
         );
         if (nextSync) {
           await BrokerConnection.update(id, { nextScheduledSync: nextSync });
