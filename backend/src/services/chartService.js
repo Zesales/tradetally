@@ -1,57 +1,121 @@
 const TierService = require('./tierService');
 const finnhub = require('../utils/finnhub');
 const alphaVantage = require('../utils/alphaVantage');
-const axios = require('axios');
+const cryptoMarketDataService = require('./cryptoMarketData.service');
 
 class ChartService {
-  // Get crypto chart data from CoinGecko for a trade's date range
-  static async getCryptoTradeChartData(symbol, entryDate, exitDate = null) {
-    const symbolUpper = symbol.toUpperCase();
-    const coinGeckoId = finnhub.constructor.CRYPTO_TO_COINGECKO[symbolUpper];
+  static resolveCryptoChartSources(symbol) {
+    return cryptoMarketDataService.resolveSymbols(symbol);
+  }
 
-    if (!coinGeckoId) {
-      throw new Error(`Unknown crypto symbol: ${symbolUpper}. CoinGecko mapping not found.`);
-    }
-
+  static getCryptoChartConfig(entryDate, exitDate = null) {
     const entryTime = new Date(entryDate);
-    const exitTime = exitDate ? new Date(exitDate) : new Date();
+    const rawExitTime = exitDate ? new Date(exitDate) : new Date();
+    const exitTime = rawExitTime > entryTime ? rawExitTime : new Date(entryTime.getTime() + (5 * 60 * 1000));
+    const durationMs = Math.max(60 * 1000, exitTime - entryTime);
+    const oneHourMs = 60 * 60 * 1000;
+    const oneDayMs = 24 * oneHourMs;
 
-    // Calculate days from entry to exit (minimum 1 day, add padding)
-    const durationMs = exitTime - entryTime;
-    const durationDays = Math.max(1, Math.ceil(durationMs / (24 * 60 * 60 * 1000)));
-    // Add padding: 2 days before entry, 2 days after exit (or up to today)
-    const days = durationDays + 4;
-
-    console.log(`[CRYPTO-CHART] Fetching CoinGecko chart for ${symbolUpper} (${coinGeckoId}), ${days} days`);
-
-    const headers = { 'Accept': 'application/json' };
-    const apiKey = process.env.COINGECKO_API_KEY;
-    if (apiKey) {
-      headers['x-cg-demo-api-key'] = apiKey;
+    if (durationMs <= oneHourMs) {
+      return {
+        interval: '1m',
+        coinbaseGranularity: 60,
+        type: 'intraday',
+        chartFromTime: new Date(entryTime.getTime() - (60 * 60 * 1000)),
+        chartToTime: new Date(exitTime.getTime() + (60 * 60 * 1000))
+      };
     }
 
-    const response = await axios.get(
-      `https://api.coingecko.com/api/v3/coins/${coinGeckoId}/market_chart?vs_currency=usd&days=${days}`,
-      { timeout: 15000, headers }
-    );
+    if (durationMs <= oneDayMs) {
+      return {
+        interval: '5m',
+        coinbaseGranularity: 300,
+        type: 'intraday',
+        chartFromTime: new Date(entryTime.getTime() - (6 * oneHourMs)),
+        chartToTime: new Date(exitTime.getTime() + (6 * oneHourMs))
+      };
+    }
 
-    const prices = response.data.prices || [];
-    const candles = prices.map(([timestamp, price]) => ({
-      time: Math.floor(timestamp / 1000),
-      open: price,
-      high: price,
-      low: price,
-      close: price
-    }));
+    if (durationMs <= 7 * oneDayMs) {
+      return {
+        interval: '15m',
+        coinbaseGranularity: 900,
+        type: 'intraday',
+        chartFromTime: new Date(entryTime.getTime() - oneDayMs),
+        chartToTime: new Date(exitTime.getTime() + oneDayMs)
+      };
+    }
 
-    console.log(`[CRYPTO-CHART] Got ${candles.length} data points for ${symbolUpper}`);
+    if (durationMs <= 30 * oneDayMs) {
+      return {
+        interval: '1h',
+        coinbaseGranularity: 3600,
+        type: 'intraday',
+        chartFromTime: new Date(entryTime.getTime() - (2 * oneDayMs)),
+        chartToTime: new Date(exitTime.getTime() + (2 * oneDayMs))
+      };
+    }
 
     return {
+      interval: '1d',
+      coinbaseGranularity: 86400,
       type: 'daily',
-      interval: 'daily',
-      candles,
-      source: 'coingecko'
+      chartFromTime: new Date(entryTime.getTime() - (3 * oneDayMs)),
+      chartToTime: new Date(exitTime.getTime() + (3 * oneDayMs))
     };
+  }
+
+  // Get crypto chart data from Binance with Coinbase fallback
+  static async getCryptoTradeChartData(symbol, entryDate, exitDate = null) {
+    const sources = this.resolveCryptoChartSources(symbol);
+    const config = this.getCryptoChartConfig(entryDate, exitDate);
+
+    console.log(`[CRYPTO-CHART] Fetching ${config.interval} chart for ${sources.symbolUpper} via Binance (${sources.binanceSymbol}) with Coinbase fallback (${sources.coinbaseProductId})`);
+
+    try {
+      const result = await cryptoMarketDataService.getCandles({
+        symbol,
+        interval: config.interval,
+        fromMs: config.chartFromTime.getTime(),
+        toMs: config.chartToTime.getTime(),
+        source: 'binance'
+      });
+      const candles = result.candles;
+      console.log(`[CRYPTO-CHART] Got ${candles.length} ${config.interval} candles for ${sources.symbolUpper} from Binance`);
+
+      return {
+        type: config.type,
+        interval: config.interval === '1d' ? 'daily' : config.interval,
+        candles,
+        source: 'binance'
+      };
+    } catch (binanceError) {
+      console.warn(`[CRYPTO-CHART] Binance failed for ${sources.symbolUpper}: ${binanceError.message}`);
+
+      try {
+        const result = await cryptoMarketDataService.getCandles({
+          symbol,
+          interval: config.interval,
+          fromMs: config.chartFromTime.getTime(),
+          toMs: config.chartToTime.getTime(),
+          source: 'coinbase'
+        });
+        const candles = result.candles;
+        console.log(`[CRYPTO-CHART] Got ${candles.length} ${config.interval} candles for ${sources.symbolUpper} from Coinbase`);
+
+        return {
+          type: config.type,
+          interval: config.interval === '1d' ? 'daily' : config.interval,
+          candles,
+          source: 'coinbase',
+          fallback: true,
+          fallbackReason: 'Binance unavailable'
+        };
+      } catch (coinbaseError) {
+        console.error(`[CRYPTO-CHART] Coinbase fallback failed for ${sources.symbolUpper}: ${coinbaseError.message}`);
+        throw new Error(`Crypto chart data unavailable for ${sources.symbolUpper}. Binance and Coinbase both failed.`);
+      }
+    }
   }
 
   // Get chart data for a trade
@@ -59,9 +123,9 @@ class ChartService {
   // When billing is disabled (self-hosted): Finnhub preferred, Alpha Vantage fallback, all users
   static async getTradeChartData(userId, symbol, entryDate, exitDate = null, hostHeader = null) {
     try {
-      // Crypto symbols always use CoinGecko regardless of tier/billing
-      if (finnhub.isCryptoSymbol(symbol)) {
-        console.log(`[CHART] ${symbol} is crypto, using CoinGecko`);
+      // Crypto symbols and pairs use exchange-native crypto chart providers
+      if (finnhub.isCryptoSymbol(symbol) || finnhub.isCryptoPairSymbol(symbol)) {
+        console.log(`[CHART] ${symbol} is crypto, using Binance with Coinbase fallback`);
         return await ChartService.getCryptoTradeChartData(symbol, entryDate, exitDate);
       }
 

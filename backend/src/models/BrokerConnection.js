@@ -116,9 +116,18 @@ class BrokerConnection {
    */
   static async findByUserId(userId) {
     const query = `
-      SELECT * FROM broker_connections
+      SELECT bc.*,
+             COALESCE(trade_counts.synced_trade_count, 0) AS synced_trade_count
+      FROM broker_connections bc
+      LEFT JOIN (
+        SELECT broker_connection_id, COUNT(*)::integer AS synced_trade_count
+        FROM trades
+        WHERE user_id = $1
+          AND broker_connection_id IS NOT NULL
+        GROUP BY broker_connection_id
+      ) trade_counts ON trade_counts.broker_connection_id = bc.id
       WHERE user_id = $1
-      ORDER BY created_at DESC
+      ORDER BY bc.created_at DESC
     `;
 
     const result = await db.query(query, [userId]);
@@ -381,6 +390,7 @@ class BrokerConnection {
       lastSyncMessage: row.last_sync_message,
       lastSyncTradesImported: row.last_sync_trades_imported,
       lastSyncTradesSkipped: row.last_sync_trades_skipped,
+      syncedTradeCount: parseInt(row.synced_trade_count, 10) || 0,
       nextScheduledSync: row.next_scheduled_sync,
       consecutiveFailures: row.consecutive_failures,
       lastErrorAt: row.last_error_at,

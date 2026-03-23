@@ -5,7 +5,7 @@
 
 const db = require('../config/database');
 const finnhub = require('../utils/finnhub');
-const DividendService = require('./dividendService');
+const OpenPositionHoldingAdapterService = require('./openPositions/openPositionHoldingAdapter.service');
 
 class HoldingsService {
   /**
@@ -14,147 +14,10 @@ class HoldingsService {
    * @returns {Promise<Array>} Array of holdings
    */
   static async getHoldings(userId) {
-    // Get manually created investment holdings
-    const holdingsQuery = `
-      SELECT h.*,
-        (SELECT COUNT(*) FROM investment_lots l WHERE l.holding_id = h.id) as lot_count,
-        (SELECT SUM(total_amount) FROM investment_dividends d WHERE d.holding_id = h.id) as total_dividends,
-        'investment' as source
-      FROM investment_holdings h
-      WHERE h.user_id = $1
-    `;
-    const holdingsResult = await db.query(holdingsQuery, [userId]);
-    const investmentHoldings = holdingsResult.rows.map(row => this.rowToHolding(row));
-
-    // Get open trades (no exit price) grouped by symbol
-    // Calculate both net position (shares held) and total shares traded from executions
-    const openTradesQuery = `
-      WITH trade_executions AS (
-        SELECT
-          t.id as trade_id,
-          t.symbol,
-          t.side,
-          t.quantity as trade_quantity,
-          t.entry_price,
-          t.entry_time,
-          t.broker,
-          t.executions,
-          t.instrument_type,
-          t.contract_size,
-          t.point_value,
-          -- Calculate cost multiplier based on instrument type
-          CASE
-            WHEN t.instrument_type = 'future' THEN COALESCE(t.point_value, 1)
-            WHEN t.instrument_type = 'option' THEN COALESCE(t.contract_size, 100)
-            ELSE 1
-          END as cost_multiplier,
-          -- Calculate net position from executions (buys - sells)
-          -- Handles both grouped executions (entryPrice/exitPrice/entryTime) and individual fills (action)
-          COALESCE(
-            (SELECT SUM(
-              CASE
-                -- Grouped executions: check for entryPrice, exitPrice, or entryTime
-                WHEN exec->>'entryPrice' IS NOT NULL OR exec->>'exitPrice' IS NOT NULL OR exec->>'entryTime' IS NOT NULL THEN
-                  -- For grouped executions with no exitPrice, it's an open position
-                  -- For grouped executions with exitPrice, it's closed (net 0)
-                  CASE
-                    WHEN exec->>'exitPrice' IS NULL THEN
-                      -- Open position: use trade side
-                      CASE WHEN t.side = 'long' THEN (exec->>'quantity')::numeric ELSE -(exec->>'quantity')::numeric END
-                    ELSE 0  -- Closed round-trip
-                  END
-                -- Individual fills: use action field
-                WHEN COALESCE(exec->>'action', exec->>'side', '') IN ('buy', 'long') THEN (exec->>'quantity')::numeric
-                WHEN COALESCE(exec->>'action', exec->>'side', '') IN ('sell', 'short') THEN -(exec->>'quantity')::numeric
-                ELSE 0
-              END
-            )
-            FROM jsonb_array_elements(COALESCE(t.executions, '[]'::jsonb)) AS exec
-            WHERE exec->>'quantity' IS NOT NULL),
-            t.quantity  -- Fallback to trade quantity if no executions
-          ) as net_position,
-          -- Calculate total shares traded (sum of all quantities)
-          COALESCE(
-            (SELECT SUM(ABS((exec->>'quantity')::numeric))
-            FROM jsonb_array_elements(COALESCE(t.executions, '[]'::jsonb)) AS exec
-            WHERE exec->>'quantity' IS NOT NULL),
-            t.quantity  -- Fallback to trade quantity if no executions
-          ) as shares_traded
-        FROM trades t
-        WHERE t.user_id = $1
-          AND t.exit_price IS NULL
-          AND t.side = 'long'
-      )
-      SELECT
-        symbol,
-        SUM(net_position) as net_shares_held,
-        SUM(shares_traded) as total_shares_traded,
-        SUM(trade_quantity) as total_shares,
-        SUM(trade_quantity * entry_price) / NULLIF(SUM(trade_quantity), 0) as average_cost_basis,
-        -- Apply contract multiplier to total_cost_basis (options * 100, futures * point_value)
-        COALESCE(SUM(net_position * COALESCE(entry_price, 0) * cost_multiplier), 0) as total_cost_basis,
-        COUNT(*) as trade_count,
-        MIN(entry_time) as first_entry,
-        MAX(entry_time) as last_entry,
-        STRING_AGG(DISTINCT broker, ', ') as brokers,
-        -- Carry instrument info through for value calculations
-        MAX(instrument_type) as instrument_type,
-        MAX(contract_size) as contract_size,
-        MAX(point_value) as point_value
-      FROM trade_executions
-      GROUP BY symbol
-      HAVING SUM(net_position) > 0
-    `;
-    const openTradesResult = await db.query(openTradesQuery, [userId]);
-
-    // Convert open trades to holding format
-    const openTradeHoldings = openTradesResult.rows.map(row => ({
-      id: `trade-${row.symbol}`, // Synthetic ID for open trades
-      userId: userId,
-      symbol: row.symbol,
-      totalShares: parseFloat(row.net_shares_held) || 0,  // Net position (shares actually held)
-      totalSharesTraded: parseFloat(row.total_shares_traded) || 0,  // Total volume traded
-      averageCostBasis: parseFloat(row.average_cost_basis) || null,
-      totalCostBasis: parseFloat(row.total_cost_basis) || 0,
-      currentPrice: null, // Will be refreshed
-      currentValue: null,
-      unrealizedPnl: null,
-      unrealizedPnlPercent: null,
-      priceUpdatedAt: null,
-      totalDividendsReceived: 0,
-      dividendYieldOnCost: null,
-      lastDividendDate: null,
-      targetAllocationPercent: null,
-      notes: null,
-      sector: null,
-      lotCount: parseInt(row.trade_count) || 0,
-      createdAt: row.first_entry,
-      updatedAt: row.last_entry,
-      source: 'trades', // Mark as coming from trades
-      brokers: row.brokers,
-      instrumentType: row.instrument_type || 'stock',
-      contractSize: row.instrument_type === 'option' ? (parseFloat(row.contract_size) || 100) : 1,
-      pointValue: row.instrument_type === 'future' ? (parseFloat(row.point_value) || 1) : null
-    }));
-
-    // Fetch dividend totals for trade-based holdings
-    try {
-      const dividendsBySymbol = await DividendService.getUserDividendsBySymbol(userId);
-      for (const holding of openTradeHoldings) {
-        const dividendData = dividendsBySymbol[holding.symbol];
-        if (dividendData) {
-          holding.totalDividendsReceived = dividendData.totalAmount;
-          holding.lastDividendDate = dividendData.lastDividendDate;
-          // Calculate dividend yield on cost if we have cost basis
-          if (holding.totalCostBasis > 0 && dividendData.totalAmount > 0) {
-            holding.dividendYieldOnCost = (dividendData.totalAmount / holding.totalCostBasis) * 100;
-          }
-        }
-      }
-    } catch (error) {
-      console.error('[HOLDINGS] Failed to fetch dividend data:', error.message);
-      // Continue without dividend data - don't fail the whole request
-    }
+    const [investmentHoldings, openTradeHoldings] = await Promise.all([
+      this.getInvestmentHoldings(userId),
+      OpenPositionHoldingAdapterService.getTradeBasedHoldings(userId)
+    ]);
 
     // Combine and deduplicate (prefer investment_holdings over open trades for same symbol)
     const holdingsMap = new Map();
@@ -186,13 +49,44 @@ class HoldingsService {
     return combined;
   }
 
+  static async getInvestmentHoldings(userId) {
+    const holdingsQuery = `
+      SELECT h.*,
+        (SELECT COUNT(*) FROM investment_lots l WHERE l.holding_id = h.id) as lot_count,
+        (SELECT SUM(total_amount) FROM investment_dividends d WHERE d.holding_id = h.id) as total_dividends,
+        'investment' as source
+      FROM investment_holdings h
+      WHERE h.user_id = $1
+    `;
+    const holdingsResult = await db.query(holdingsQuery, [userId]);
+    return holdingsResult.rows.map(row => this.rowToHolding(row));
+  }
+
   /**
    * Get a single holding by ID
    * @param {string} userId - User ID
    * @param {string} holdingId - Holding ID
    * @returns {Promise<Object|null>} Holding or null
    */
-  static async getHolding(userId, holdingId) {
+  static async getHolding(userId, holdingId, options = {}) {
+    const { refreshPrices = false } = options;
+
+    if (String(holdingId).startsWith('trade-')) {
+      const symbol = String(holdingId).slice('trade-'.length).toUpperCase();
+      const holdings = refreshPrices
+        ? await this.refreshPrices(userId)
+        : await this.getHoldings(userId);
+
+      return holdings.find(holding =>
+        String(holding.id) === String(holdingId)
+        || (holding.source === 'trades' && holding.symbol === symbol)
+      ) || null;
+    }
+
+    if (refreshPrices) {
+      await this.refreshHoldingPrice(userId, holdingId);
+    }
+
     const query = `
       SELECT h.*,
         (SELECT COUNT(*) FROM investment_lots l WHERE l.holding_id = h.id) as lot_count,
@@ -398,6 +292,10 @@ class HoldingsService {
    * @returns {Promise<Array>} Array of lots
    */
   static async getLots(userId, holdingId) {
+    if (String(holdingId).startsWith('trade-')) {
+      return [];
+    }
+
     const query = `
       SELECT *
       FROM investment_lots
@@ -453,6 +351,10 @@ class HoldingsService {
    * @returns {Promise<Object>} Created dividend
    */
   static async recordDividend(userId, holdingId, data) {
+    if (String(holdingId).startsWith('trade-')) {
+      throw new Error('Dividends are not supported for trade-based positions');
+    }
+
     const { dividendPerShare, sharesHeld, paymentDate, exDividendDate, isDrip, dripShares, dripPrice, notes } = data;
 
     const holding = await this.getHolding(userId, holdingId);
@@ -509,6 +411,10 @@ class HoldingsService {
    * @returns {Promise<Array>} Array of dividends
    */
   static async getDividendHistory(userId, holdingId) {
+    if (String(holdingId).startsWith('trade-')) {
+      return [];
+    }
+
     const query = `
       SELECT *
       FROM investment_dividends
@@ -665,7 +571,11 @@ class HoldingsService {
    * @param {string} holdingId - Holding ID
    */
   static async refreshHoldingPrice(userId, holdingId) {
-    const holding = await this.getHolding(userId, holdingId);
+    if (String(holdingId).startsWith('trade-')) {
+      return;
+    }
+
+    const holding = await this.getHolding(userId, holdingId, { refreshPrices: false });
     if (!holding) return;
 
     try {

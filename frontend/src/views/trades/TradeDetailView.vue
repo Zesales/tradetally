@@ -41,21 +41,28 @@
         </div>
       </div>
 
-      <!-- Incomplete Calculation Banner -->
-      <div v-if="hasIncompleteQuality" class="rounded-md bg-yellow-50 dark:bg-yellow-900/20 p-4 border border-yellow-200 dark:border-yellow-800">
+      <!-- Quality Calculation Banner -->
+      <div
+        v-if="qualityStatusInfo"
+        class="rounded-md p-4 border"
+        :class="qualityStatusInfo.containerClass"
+      >
         <div class="flex">
           <div class="flex-shrink-0">
-            <svg class="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
+            <svg class="h-5 w-5" :class="qualityStatusInfo.iconClass" viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
             </svg>
           </div>
           <div class="ml-3">
-            <h3 class="text-sm font-medium text-yellow-800 dark:text-yellow-200">
-              Incomplete Calculation
+            <h3 class="text-sm font-medium" :class="qualityStatusInfo.titleClass">
+              {{ qualityStatusInfo.title }}
             </h3>
-            <div class="mt-2 text-sm text-yellow-700 dark:text-yellow-300">
+            <div class="mt-2 text-sm" :class="qualityStatusInfo.bodyClass">
               <p>
-                Some quality metrics could not be retrieved. This may be due to API rate limits, missing data, or future-dated trades. The quality grade shown is based on available metrics only.
+                {{ qualityStatusInfo.message }}
+              </p>
+              <p v-if="qualityPrimaryWarning" class="mt-2">
+                {{ qualityPrimaryWarning }}
               </p>
             </div>
           </div>
@@ -233,6 +240,21 @@
                       <span v-if="trade.qualityScore" class="text-sm text-gray-600 dark:text-gray-400">
                         ({{ Number(trade.qualityScore).toFixed(1) }}/5.0)
                       </span>
+                      <button
+                        @click="calculateQuality"
+                        :disabled="calculatingQuality"
+                        class="inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs text-gray-600 transition-colors hover:bg-gray-100 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-300 dark:hover:bg-gray-800 dark:hover:text-primary-400"
+                        :title="calculatingQuality ? 'Retrying quality calculation' : 'Retry quality calculation'"
+                      >
+                        <img
+                          src="/sync-icon.svg"
+                          alt=""
+                          aria-hidden="true"
+                          class="h-3.5 w-3.5 opacity-80 dark:invert"
+                          :class="{ 'animate-spin': calculatingQuality }"
+                        />
+                        <span>{{ calculatingQuality ? 'Retrying...' : 'Retry' }}</span>
+                      </button>
                     </div>
                     <div v-else class="flex items-center space-x-2">
                       <span class="text-sm text-gray-500 dark:text-gray-400">Not calculated</span>
@@ -320,208 +342,95 @@
             <div class="card-body">
               <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Quality Metrics Breakdown</h3>
 
+              <div
+                v-if="showProminentQualitySourceCoverage"
+                class="mb-5 rounded-xl border p-4"
+                :class="qualitySourceCoverageCardClass"
+              >
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="text-xs font-semibold uppercase tracking-wide" :class="qualitySourceCoverageEyebrowClass">
+                      Source Coverage
+                    </p>
+                    <h4 class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">
+                      {{ qualitySourceCoverageHeadline }}
+                    </h4>
+                    <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">
+                      {{ qualitySourceCoverageSummary }}
+                    </p>
+                  </div>
+                  <div
+                    v-if="trade.qualityMetrics?.confidenceScore !== null && trade.qualityMetrics?.confidenceScore !== undefined"
+                    class="text-right shrink-0"
+                  >
+                    <div class="text-xl font-bold text-gray-900 dark:text-white">
+                      {{ Math.round(Number(trade.qualityMetrics.confidenceScore) * 100) }}%
+                    </div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400">
+                      Confidence
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <span
+                    v-for="source in trade.qualityMetrics?.sourceSummary?.requested || []"
+                    :key="source"
+                    class="px-2.5 py-1 text-xs font-medium rounded-full"
+                    :class="qualitySourceChipClass(source)"
+                  >
+                    {{ formatQualitySourceLabel(source) }}
+                  </span>
+                </div>
+
+                <div v-if="qualitySourceCoverageDetails.length" class="mt-3 space-y-1.5">
+                  <p
+                    v-for="detail in qualitySourceCoverageDetails"
+                    :key="detail"
+                    class="text-xs text-gray-700 dark:text-gray-300"
+                  >
+                    {{ detail }}
+                  </p>
+                </div>
+
+                <div v-if="trade.qualityMetrics?.warnings?.length" class="mt-3 space-y-1.5">
+                  <p
+                    v-for="warning in trade.qualityMetrics.warnings"
+                    :key="warning"
+                    class="text-xs font-medium text-gray-800 dark:text-gray-200"
+                  >
+                    {{ warning }}
+                  </p>
+                </div>
+              </div>
+
               <div class="space-y-4">
-                <!-- News Sentiment (35% weight) -->
-                <div class="border-l-4 pl-4 py-2"
-                  :class="[
-                    getScore(trade.qualityMetrics.newsSentimentScore) >= 0.8 ? 'border-green-400' :
-                    getScore(trade.qualityMetrics.newsSentimentScore) >= 0.6 ? 'border-blue-400' :
-                    getScore(trade.qualityMetrics.newsSentimentScore) >= 0.4 ? 'border-yellow-400' :
-                    'border-red-400'
-                  ]">
+                <div
+                  v-for="metric in qualityBreakdownItems"
+                  :key="metric.key"
+                  class="border-l-4 pl-4 py-2"
+                  :class="getQualityMetricBorderClass(metric.score)"
+                >
                   <div class="flex items-center justify-between mb-2">
                     <div>
-                      <h4 class="text-sm font-semibold text-gray-900 dark:text-white">News Sentiment</h4>
-                      <p class="text-xs text-gray-500 dark:text-gray-400">Weight: 30% (Highest)</p>
+                      <h4 class="text-sm font-semibold text-gray-900 dark:text-white">{{ metric.label }}</h4>
+                      <p class="text-xs text-gray-500 dark:text-gray-400">{{ metric.subtitle }}</p>
                     </div>
                     <div class="text-right">
-                      <div class="text-sm font-semibold"
-                        :class="[
-                          getScore(trade.qualityMetrics.newsSentimentScore) >= 0.8 ? 'text-green-600 dark:text-green-400' :
-                          getScore(trade.qualityMetrics.newsSentimentScore) >= 0.6 ? 'text-blue-600 dark:text-blue-400' :
-                          getScore(trade.qualityMetrics.newsSentimentScore) >= 0.4 ? 'text-yellow-600 dark:text-yellow-400' :
-                          'text-red-600 dark:text-red-400'
-                        ]">
-                        {{ (getScore(trade.qualityMetrics.newsSentimentScore) * 100).toFixed(0) }}%
+                      <div class="text-sm font-semibold" :class="getQualityMetricTextClass(metric.score)">
+                        {{ (getScore(metric.score) * 100).toFixed(0) }}%
                       </div>
                       <div class="text-xs text-gray-500 dark:text-gray-400">
-                        {{ trade.qualityMetrics.newsSentiment !== null && trade.qualityMetrics.newsSentiment !== undefined ? Number(trade.qualityMetrics.newsSentiment).toFixed(2) : 'N/A' }}
+                        {{ formatQualityMetricValue(metric) }}
                       </div>
                     </div>
                   </div>
                   <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div class="h-2 rounded-full transition-all"
-                      :class="[
-                        getScore(trade.qualityMetrics.newsSentimentScore) >= 0.8 ? 'bg-green-500' :
-                        getScore(trade.qualityMetrics.newsSentimentScore) >= 0.6 ? 'bg-blue-500' :
-                        getScore(trade.qualityMetrics.newsSentimentScore) >= 0.4 ? 'bg-yellow-500' :
-                        'bg-red-500'
-                      ]"
-                      :style="{ width: (getScore(trade.qualityMetrics.newsSentimentScore) * 100) + '%' }">
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Gap from Previous Close (20% weight) -->
-                <div class="border-l-4 pl-4 py-2"
-                  :class="[
-                    getScore(trade.qualityMetrics?.gapScore) >= 0.8 ? 'border-green-400' :
-                    getScore(trade.qualityMetrics?.gapScore) >= 0.6 ? 'border-blue-400' :
-                    getScore(trade.qualityMetrics?.gapScore) >= 0.4 ? 'border-yellow-400' :
-                    'border-red-400'
-                  ]">
-                  <div class="flex items-center justify-between mb-2">
-                    <div>
-                      <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Gap from Previous Close</h4>
-                      <p class="text-xs text-gray-500 dark:text-gray-400">Weight: 20% (Previous close to entry price)</p>
-                    </div>
-                    <div class="text-right">
-                      <div class="text-sm font-semibold"
-                        :class="[
-                          getScore(trade.qualityMetrics?.gapScore) >= 0.8 ? 'text-green-600 dark:text-green-400' :
-                          getScore(trade.qualityMetrics?.gapScore) >= 0.6 ? 'text-blue-600 dark:text-blue-400' :
-                          getScore(trade.qualityMetrics?.gapScore) >= 0.4 ? 'text-yellow-600 dark:text-yellow-400' :
-                          'text-red-600 dark:text-red-400'
-                        ]">
-                        {{ (getScore(trade.qualityMetrics?.gapScore) * 100).toFixed(0) }}%
-                      </div>
-                      <div class="text-xs text-gray-500 dark:text-gray-400">
-                        {{ trade.qualityMetrics?.gap !== null && trade.qualityMetrics?.gap !== undefined ? (Number(trade.qualityMetrics.gap) > 0 ? '+' : '') + Number(trade.qualityMetrics.gap).toFixed(2) + '%' : 'N/A' }}
-                      </div>
-                    </div>
-                  </div>
-                  <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div class="h-2 rounded-full transition-all"
-                      :class="[
-                        getScore(trade.qualityMetrics?.gapScore) >= 0.8 ? 'bg-green-500' :
-                        getScore(trade.qualityMetrics?.gapScore) >= 0.6 ? 'bg-blue-500' :
-                        getScore(trade.qualityMetrics?.gapScore) >= 0.4 ? 'bg-yellow-500' :
-                        'bg-red-500'
-                      ]"
-                      :style="{ width: (getScore(trade.qualityMetrics?.gapScore) * 100) + '%' }">
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Relative Volume (20% weight) -->
-                <div class="border-l-4 pl-4 py-2"
-                  :class="[
-                    getScore(trade.qualityMetrics.relativeVolumeScore) >= 0.8 ? 'border-green-400' :
-                    getScore(trade.qualityMetrics.relativeVolumeScore) >= 0.6 ? 'border-blue-400' :
-                    getScore(trade.qualityMetrics.relativeVolumeScore) >= 0.4 ? 'border-yellow-400' :
-                    'border-red-400'
-                  ]">
-                  <div class="flex items-center justify-between mb-2">
-                    <div>
-                      <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Relative Volume</h4>
-                      <p class="text-xs text-gray-500 dark:text-gray-400">Weight: 20%</p>
-                    </div>
-                    <div class="text-right">
-                      <div class="text-sm font-semibold"
-                        :class="[
-                          getScore(trade.qualityMetrics.relativeVolumeScore) >= 0.8 ? 'text-green-600 dark:text-green-400' :
-                          getScore(trade.qualityMetrics.relativeVolumeScore) >= 0.6 ? 'text-blue-600 dark:text-blue-400' :
-                          getScore(trade.qualityMetrics.relativeVolumeScore) >= 0.4 ? 'text-yellow-600 dark:text-yellow-400' :
-                          'text-red-600 dark:text-red-400'
-                        ]">
-                        {{ (getScore(trade.qualityMetrics.relativeVolumeScore) * 100).toFixed(0) }}%
-                      </div>
-                      <div class="text-xs text-gray-500 dark:text-gray-400">
-                        {{ trade.qualityMetrics.relativeVolume !== null && trade.qualityMetrics.relativeVolume !== undefined ? Number(trade.qualityMetrics.relativeVolume).toFixed(1) + 'x' : 'N/A' }}
-                      </div>
-                    </div>
-                  </div>
-                  <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div class="h-2 rounded-full transition-all"
-                      :class="[
-                        getScore(trade.qualityMetrics.relativeVolumeScore) >= 0.8 ? 'bg-green-500' :
-                        getScore(trade.qualityMetrics.relativeVolumeScore) >= 0.6 ? 'bg-blue-500' :
-                        getScore(trade.qualityMetrics.relativeVolumeScore) >= 0.4 ? 'bg-yellow-500' :
-                        'bg-red-500'
-                      ]"
-                      :style="{ width: (getScore(trade.qualityMetrics.relativeVolumeScore) * 100) + '%' }">
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Float (15% weight) -->
-                <div class="border-l-4 pl-4 py-2"
-                  :class="[
-                    getScore(trade.qualityMetrics?.floatScore) >= 0.8 ? 'border-green-400' :
-                    getScore(trade.qualityMetrics?.floatScore) >= 0.6 ? 'border-blue-400' :
-                    getScore(trade.qualityMetrics?.floatScore) >= 0.4 ? 'border-yellow-400' :
-                    'border-red-400'
-                  ]">
-                  <div class="flex items-center justify-between mb-2">
-                    <div>
-                      <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Float (Shares Outstanding)</h4>
-                      <p class="text-xs text-gray-500 dark:text-gray-400">Weight: 15%</p>
-                    </div>
-                    <div class="text-right">
-                      <div class="text-sm font-semibold"
-                        :class="[
-                          getScore(trade.qualityMetrics?.floatScore) >= 0.8 ? 'text-green-600 dark:text-green-400' :
-                          getScore(trade.qualityMetrics?.floatScore) >= 0.6 ? 'text-blue-600 dark:text-blue-400' :
-                          getScore(trade.qualityMetrics?.floatScore) >= 0.4 ? 'text-yellow-600 dark:text-yellow-400' :
-                          'text-red-600 dark:text-red-400'
-                        ]">
-                        {{ (getScore(trade.qualityMetrics?.floatScore) * 100).toFixed(0) }}%
-                      </div>
-                      <div class="text-xs text-gray-500 dark:text-gray-400">
-                        {{ formatFloat(trade.qualityMetrics?.float) }}
-                      </div>
-                    </div>
-                  </div>
-                  <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div class="h-2 rounded-full transition-all"
-                      :class="[
-                        getScore(trade.qualityMetrics?.floatScore) >= 0.8 ? 'bg-green-500' :
-                        getScore(trade.qualityMetrics?.floatScore) >= 0.6 ? 'bg-blue-500' :
-                        getScore(trade.qualityMetrics?.floatScore) >= 0.4 ? 'bg-yellow-500' :
-                        'bg-red-500'
-                      ]"
-                      :style="{ width: (getScore(trade.qualityMetrics?.floatScore) * 100) + '%' }">
-                    </div>
-                  </div>
-                </div>
-
-                <!-- Price Range (15% weight) -->
-                <div class="border-l-4 pl-4 py-2"
-                  :class="[
-                    getScore(trade.qualityMetrics.priceScore) >= 0.8 ? 'border-green-400' :
-                    getScore(trade.qualityMetrics.priceScore) >= 0.6 ? 'border-blue-400' :
-                    getScore(trade.qualityMetrics.priceScore) >= 0.4 ? 'border-yellow-400' :
-                    'border-red-400'
-                  ]">
-                  <div class="flex items-center justify-between mb-2">
-                    <div>
-                      <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Price Range</h4>
-                      <p class="text-xs text-gray-500 dark:text-gray-400">Weight: 15%</p>
-                    </div>
-                    <div class="text-right">
-                      <div class="text-sm font-semibold"
-                        :class="[
-                          getScore(trade.qualityMetrics.priceScore) >= 0.8 ? 'text-green-600 dark:text-green-400' :
-                          getScore(trade.qualityMetrics.priceScore) >= 0.6 ? 'text-blue-600 dark:text-blue-400' :
-                          getScore(trade.qualityMetrics.priceScore) >= 0.4 ? 'text-yellow-600 dark:text-yellow-400' :
-                          'text-red-600 dark:text-red-400'
-                        ]">
-                        {{ (getScore(trade.qualityMetrics.priceScore) * 100).toFixed(0) }}%
-                      </div>
-                      <div class="text-xs text-gray-500 dark:text-gray-400">
-                        {{ trade.qualityMetrics.price !== null && trade.qualityMetrics.price !== undefined ? '$' + Number(trade.qualityMetrics.price).toFixed(2) : 'N/A' }}
-                      </div>
-                    </div>
-                  </div>
-                  <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                    <div class="h-2 rounded-full transition-all"
-                      :class="[
-                        getScore(trade.qualityMetrics.priceScore) >= 0.8 ? 'bg-green-500' :
-                        getScore(trade.qualityMetrics.priceScore) >= 0.6 ? 'bg-blue-500' :
-                        getScore(trade.qualityMetrics.priceScore) >= 0.4 ? 'bg-yellow-500' :
-                        'bg-red-500'
-                      ]"
-                      :style="{ width: (getScore(trade.qualityMetrics.priceScore) * 100) + '%' }">
+                    <div
+                      class="h-2 rounded-full transition-all"
+                      :class="getQualityMetricBarClass(metric.score)"
+                      :style="{ width: (getScore(metric.score) * 100) + '%' }"
+                    >
                     </div>
                   </div>
                 </div>
@@ -551,6 +460,7 @@
                   </div>
                 </div>
               </div>
+
             </div>
           </div>
 
@@ -1234,6 +1144,309 @@ const formatFloat = (value) => {
   return num.toFixed(2) + 'M'
 }
 
+const qualityBreakdownItems = computed(() => {
+  const metrics = trade.value?.qualityMetrics
+  if (!metrics) return []
+
+  if (Array.isArray(metrics.breakdown) && metrics.breakdown.length > 0) {
+    return metrics.breakdown
+  }
+
+  return [
+    {
+      key: 'newsSentiment',
+      label: 'News Sentiment',
+      subtitle: 'Weight: 30% (Highest)',
+      score: metrics.newsSentimentScore,
+      value: metrics.newsSentiment,
+      format: 'number_2'
+    },
+    {
+      key: 'gap',
+      label: 'Gap from Previous Close',
+      subtitle: 'Weight: 20% (Previous close to entry price)',
+      score: metrics.gapScore,
+      value: metrics.gap,
+      format: 'signed_percent_2'
+    },
+    {
+      key: 'relativeVolume',
+      label: 'Relative Volume',
+      subtitle: 'Weight: 20%',
+      score: metrics.relativeVolumeScore,
+      value: metrics.relativeVolume,
+      format: 'multiple_1'
+    },
+    {
+      key: 'float',
+      label: 'Float (Shares Outstanding)',
+      subtitle: 'Weight: 15%',
+      score: metrics.floatScore,
+      value: metrics.float,
+      format: 'millions_2'
+    },
+    {
+      key: 'price',
+      label: 'Price Range',
+      subtitle: 'Weight: 15%',
+      score: metrics.priceScore,
+      value: metrics.price,
+      format: 'currency_2'
+    }
+  ]
+})
+
+const qualityStatusInfo = computed(() => {
+  const metrics = trade.value?.qualityMetrics
+  if (!trade.value?.qualityGrade || !metrics) return null
+
+  const status = metrics.sourceCalculationStatus
+
+  if (status === 'poor_source_calculation') {
+    return {
+      title: 'Poor Source Calculation',
+      message: 'Multiple upstream crypto data requests had issues or source agreement was weak. The quality score is available, but confidence is reduced.',
+      containerClass: 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800',
+      iconClass: 'text-red-400',
+      titleClass: 'text-red-800 dark:text-red-200',
+      bodyClass: 'text-red-700 dark:text-red-300'
+    }
+  }
+
+  if (status === 'partial_source_calculation' || hasIncompleteQuality.value) {
+    return {
+      title: 'Partial Source Calculation',
+      message: 'Some quality inputs were unavailable, so the score was calculated from the remaining verified crypto market data.',
+      containerClass: 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800',
+      iconClass: 'text-yellow-400',
+      titleClass: 'text-yellow-800 dark:text-yellow-200',
+      bodyClass: 'text-yellow-700 dark:text-yellow-300'
+    }
+  }
+
+  if (hasIncompleteQuality.value) {
+    return {
+      title: 'Incomplete Calculation',
+      message: 'Some quality metrics could not be retrieved. This may be due to API rate limits, missing data, or future-dated trades. The quality grade shown is based on available metrics only.',
+      containerClass: 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800',
+      iconClass: 'text-yellow-400',
+      titleClass: 'text-yellow-800 dark:text-yellow-200',
+      bodyClass: 'text-yellow-700 dark:text-yellow-300'
+    }
+  }
+
+  return null
+})
+
+const qualityPrimaryWarning = computed(() => {
+  const warnings = trade.value?.qualityMetrics?.warnings
+  if (!Array.isArray(warnings) || warnings.length === 0) return null
+  return warnings[0]
+})
+
+const showProminentQualitySourceCoverage = computed(() => {
+  const metrics = trade.value?.qualityMetrics
+  return metrics?.model === 'crypto' && !!metrics?.sourceSummary
+})
+
+const qualitySourceCoverageHeadline = computed(() => {
+  const metrics = trade.value?.qualityMetrics
+  if (!metrics?.sourceSummary) return 'No source coverage details available.'
+
+  if (metrics.sourceCalculationStatus === 'full_source_calculation') {
+    return 'This crypto grade is backed by two aligned market data sources.'
+  }
+
+  if (metrics.sourceCalculationStatus === 'partial_source_calculation') {
+    return 'This crypto grade used partial source coverage.'
+  }
+
+  if (metrics.sourceCalculationStatus === 'poor_source_calculation') {
+    return 'This crypto grade has reduced source reliability.'
+  }
+
+  return 'This crypto grade includes source coverage details.'
+})
+
+const qualitySourceCoverageCardClass = computed(() => {
+  const status = trade.value?.qualityMetrics?.sourceCalculationStatus
+
+  if (status === 'full_source_calculation') {
+    return 'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20'
+  }
+
+  if (status === 'partial_source_calculation') {
+    return 'border-yellow-200 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-900/20'
+  }
+
+  return 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20'
+})
+
+const qualitySourceCoverageEyebrowClass = computed(() => {
+  const status = trade.value?.qualityMetrics?.sourceCalculationStatus
+
+  if (status === 'full_source_calculation') {
+    return 'text-green-700 dark:text-green-300'
+  }
+
+  if (status === 'partial_source_calculation') {
+    return 'text-yellow-700 dark:text-yellow-300'
+  }
+
+  return 'text-red-700 dark:text-red-300'
+})
+
+const qualitySourceCoverageSummary = computed(() => {
+  const summary = trade.value?.qualityMetrics?.sourceSummary
+  if (!summary) return 'No source details available.'
+
+  const canonicalSource = formatQualitySourceLabel(summary.canonicalSource)
+  const succeeded = Array.isArray(summary.succeeded) ? summary.succeeded.map(formatQualitySourceLabel) : []
+
+  if (!summary.canonicalSource) {
+    return 'No market data source returned usable crypto data.'
+  }
+
+  if (succeeded.length <= 1) {
+    return `Main calculation used ${canonicalSource}. No second source was available for a cross-check.`
+  }
+
+  return `Main calculation used ${canonicalSource}. The other successful source was only used for cross-checking or selective aggregation where values matched closely.`
+})
+
+const qualitySourceCoverageDetails = computed(() => {
+  const summary = trade.value?.qualityMetrics?.sourceSummary
+  if (!summary) return []
+
+  const details = []
+  const fieldUsage = summary.fieldUsage || {}
+  const failed = Array.isArray(summary.failed) ? summary.failed : []
+  const agreementScore = summary.agreementScore
+
+  details.push(`Price candles, momentum, trend alignment and relative volume all came from ${formatQualitySourceLabel(fieldUsage.ohlcv || summary.canonicalSource)}.`)
+  details.push(`Liquidity used ${describeFieldUsage(fieldUsage.liquidity)}. Volatility used ${describeFieldUsage(fieldUsage.volatility)}.`)
+
+  if (agreementScore !== null && agreementScore !== undefined) {
+    details.push(`Cross-source agreement was ${Math.round(Number(agreementScore) * 100)}%, based on close price, daily range and previous close comparisons.`)
+  } else {
+    details.push('No cross-source agreement check was possible because only one usable source responded.')
+  }
+
+  failed.forEach(item => {
+    details.push(`${formatQualitySourceLabel(item.source)} request failed: ${formatQualityFailureReason(item.reason)}.`)
+  })
+
+  return details
+})
+
+function getQualityMetricBorderClass(score) {
+  const numericScore = getScore(score)
+  if (numericScore >= 0.8) return 'border-green-400'
+  if (numericScore >= 0.6) return 'border-blue-400'
+  if (numericScore >= 0.4) return 'border-yellow-400'
+  return 'border-red-400'
+}
+
+function getQualityMetricTextClass(score) {
+  const numericScore = getScore(score)
+  if (numericScore >= 0.8) return 'text-green-600 dark:text-green-400'
+  if (numericScore >= 0.6) return 'text-blue-600 dark:text-blue-400'
+  if (numericScore >= 0.4) return 'text-yellow-600 dark:text-yellow-400'
+  return 'text-red-600 dark:text-red-400'
+}
+
+function getQualityMetricBarClass(score) {
+  const numericScore = getScore(score)
+  if (numericScore >= 0.8) return 'bg-green-500'
+  if (numericScore >= 0.6) return 'bg-blue-500'
+  if (numericScore >= 0.4) return 'bg-yellow-500'
+  return 'bg-red-500'
+}
+
+function formatQualityMetricValue(metric) {
+  if (!metric || metric.value === null || metric.value === undefined) return 'N/A'
+
+  const value = Number(metric.value)
+  if (Number.isNaN(value)) return 'N/A'
+
+  switch (metric.format) {
+    case 'number_2':
+      return value.toFixed(2)
+    case 'signed_percent_2':
+      return `${value > 0 ? '+' : ''}${value.toFixed(2)}%`
+    case 'unsigned_percent_2':
+      return `${value.toFixed(2)}%`
+    case 'multiple_1':
+      return `${value.toFixed(1)}x`
+    case 'millions_2':
+      return formatFloat(value)
+    case 'currency_2':
+      return `$${value.toFixed(2)}`
+    case 'currency_compact':
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        notation: 'compact',
+        maximumFractionDigits: 2
+      }).format(value)
+    default:
+      return value.toFixed(2)
+  }
+}
+
+function qualitySourceChipClass(source) {
+  const summary = trade.value?.qualityMetrics?.sourceSummary
+  const succeeded = Array.isArray(summary?.succeeded) ? summary.succeeded : []
+
+  if (succeeded.includes(source)) {
+    return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+  }
+
+  return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+}
+
+function formatQualitySourceLabel(source) {
+  if (!source) return 'no source'
+
+  const labels = {
+    binance: 'Binance',
+    coinbase: 'Coinbase',
+    coingecko: 'CoinGecko',
+    aggregated: 'both sources combined',
+    missing: 'missing data'
+  }
+
+  return labels[source] || source
+}
+
+function describeFieldUsage(strategy) {
+  if (!strategy) return 'an unknown source strategy'
+
+  if (strategy === 'aggregated') {
+    return 'both successful sources combined after the values were close enough'
+  }
+
+  if (strategy === 'missing') {
+    return 'no usable source data'
+  }
+
+  return `${formatQualitySourceLabel(strategy)} only`
+}
+
+function formatQualityFailureReason(reason) {
+  const normalizedReason = String(reason || '').trim().toLowerCase()
+
+  const reasonLabels = {
+    rate_limited: 'rate limit reached',
+    not_found: 'market data not found',
+    upstream_server_error: 'upstream server error',
+    timeout: 'request timed out',
+    request_failed: 'request failed'
+  }
+
+  return reasonLabels[normalizedReason] || normalizedReason || 'request failed'
+}
+
 // Comments state
 const comments = ref([])
 const loadingComments = ref(false)
@@ -1263,17 +1476,10 @@ const hasIncompleteQuality = computed(() => {
     return false
   }
 
-  const metrics = trade.value.qualityMetrics
-
-  // Check if any of the key metrics are null or undefined
-  const hasNullMetrics =
-    metrics.newsSentiment === null || metrics.newsSentiment === undefined ||
-    metrics.gap === null || metrics.gap === undefined ||
-    metrics.relativeVolume === null || metrics.relativeVolume === undefined ||
-    metrics.float === null || metrics.float === undefined ||
-    metrics.price === null || metrics.price === undefined
-
-  return hasNullMetrics
+  const sourceStatus = trade.value.qualityMetrics?.sourceCalculationStatus
+  return sourceStatus === 'partial_source_calculation' ||
+    sourceStatus === 'poor_source_calculation' ||
+    qualityBreakdownItems.value.some(metric => metric.value === null || metric.value === undefined)
 })
 
 // Ref to track if chart image failed to load

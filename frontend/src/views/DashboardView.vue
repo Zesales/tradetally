@@ -369,12 +369,34 @@
                   </div>
                   <!-- Mobile Card View -->
                   <div class="block lg:hidden space-y-3">
-            <div v-for="position in openTrades" :key="position.symbol" class="table-card-item">
+            <div
+              v-for="position in openTrades"
+              :key="getOpenPositionUiKey(position)"
+              class="table-card-item"
+            >
               <!-- Position Header -->
               <div class="flex justify-between items-start mb-3 pb-3 border-b border-gray-200 dark:border-gray-700">
                 <div>
-                  <div class="text-lg font-bold text-gray-900 dark:text-white">
-                    {{ position.symbol }}
+                  <div class="flex items-center gap-2">
+                    <button
+                      v-if="hasOpenPositionDetails(position)"
+                      type="button"
+                      @click="toggleOpenPositionDetails(position)"
+                      @click.stop
+                      class="flex h-6 w-6 items-center justify-center rounded text-primary-600 transition-transform duration-200 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+                      :class="{ 'rotate-90': isOpenPositionExpanded(position) }"
+                      :aria-label="isOpenPositionExpanded(position) ? 'Hide trades' : 'Show trades'"
+                    >
+                      <MdiIcon :icon="mdiChevronRight" :size="18" />
+                    </button>
+                    <span v-else class="block h-6 w-6 shrink-0"></span>
+                    <button
+                      type="button"
+                      @click.stop="navigateToOpenPosition(position)"
+                      class="text-lg font-bold text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+                    >
+                      {{ position.symbol }}
+                    </button>
                   </div>
                   <span class="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full mt-1"
                     :class="[
@@ -468,45 +490,46 @@
                 </div>
               </div>
 
-              <!-- Individual Trades (only show when position has multiple trades) -->
-              <div v-if="position.trades.length > 1" class="pt-3 border-t border-gray-200 dark:border-gray-700">
-                <div class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                  {{ position.trades.length }} trades
+              <!-- Position actions -->
+              <div class="pt-3 border-t border-gray-200 dark:border-gray-700">
+                <div class="text-xs text-gray-500 dark:text-gray-400">
+                  {{ getOpenPositionDetailSummary(position) }}
                 </div>
+              </div>
+
+              <!-- Individual Trades (only show when expanded) -->
+              <div
+                v-if="hasOpenPositionDetails(position) && isOpenPositionExpanded(position)"
+                class="pt-3"
+              >
                 <div class="space-y-2">
-                  <div v-for="trade in position.trades" :key="trade.id"
+                  <div v-for="detail in getOpenPositionDetailRows(position)" :key="detail.id"
                        class="flex justify-between items-center text-sm bg-gray-50 dark:bg-gray-900 rounded px-3 py-2">
                     <div class="flex items-center space-x-2">
-                      <span class="text-xs text-gray-500">Trade #{{ trade.id }}</span>
+                      <span class="text-xs font-medium text-gray-500 dark:text-gray-400">{{ detail.label }}</span>
                       <span class="px-1.5 text-xs leading-4 font-medium rounded"
                         :class="[
-                          trade.side === 'long'
+                          detail.side === 'long'
                             ? 'bg-green-50 text-green-700 dark:bg-green-900/10 dark:text-green-400'
                             : 'bg-red-50 text-red-700 dark:bg-red-900/10 dark:text-red-400'
                         ]">
-                        {{ trade.side }}
+                        {{ detail.side }}
                       </span>
                       <span class="text-xs text-gray-600 dark:text-gray-400">
-                        {{ formatPositionQuantity(trade.quantity || 0, position) }} @ ${{ formatCurrency(trade.entry_price) }}
+                        {{ formatSignedPositionQuantity(detail.signedQuantity, position) }}
+                        <template v-if="detail.price !== null">
+                          @ ${{ formatCurrency(detail.price) }}
+                        </template>
+                        <template v-if="detail.runningQuantity !== null">
+                          · {{ formatPositionQuantity(detail.runningQuantity, position) }} held
+                        </template>
                       </span>
                     </div>
-                    <router-link
-                      :to="`/trades/${trade.id}`"
-                      class="text-xs text-primary-600 hover:text-primary-900 dark:hover:text-primary-400 font-medium"
-                    >
-                      View →
-                    </router-link>
+                    <span class="text-xs text-gray-400 font-medium">
+                      {{ formatDate(detail.tradeDate) }}
+                    </span>
                   </div>
                 </div>
-              </div>
-              <!-- Single trade: just show a View link -->
-              <div v-else class="pt-3 border-t border-gray-200 dark:border-gray-700">
-                <router-link
-                  :to="`/trades/${position.trades[0].id}`"
-                  class="text-sm text-primary-600 hover:text-primary-900 dark:hover:text-primary-400 font-medium"
-                >
-                  View Trade →
-                </router-link>
               </div>
             </div>
 
@@ -561,19 +584,36 @@
                     Unrealized P&L
                   </th>
                   <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Individual Trades
-                  </th>
-                  <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                    Actions
+                    Details
                   </th>
                 </tr>
               </thead>
               <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
-                <template v-for="position in openTrades" :key="position.symbol">
+                <template v-for="position in openTrades" :key="getOpenPositionUiKey(position)">
                   <!-- Position Summary Row -->
                   <tr class="bg-gray-50 dark:bg-gray-800/50 font-medium">
                     <td class="px-3 py-2 text-sm font-bold text-gray-900 dark:text-white">
-                      {{ position.symbol }}
+                      <div class="flex items-center gap-2">
+                        <button
+                          v-if="hasOpenPositionDetails(position)"
+                          type="button"
+                          @click="toggleOpenPositionDetails(position)"
+                          @click.stop
+                          class="flex h-6 w-6 items-center justify-center rounded text-primary-600 transition-transform duration-200 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+                          :class="{ 'rotate-90': isOpenPositionExpanded(position) }"
+                          :aria-label="isOpenPositionExpanded(position) ? 'Hide trades' : 'Show trades'"
+                        >
+                          <MdiIcon :icon="mdiChevronRight" :size="18" />
+                        </button>
+                        <span v-else class="block h-6 w-6 shrink-0"></span>
+                        <button
+                          type="button"
+                          @click.stop="navigateToOpenPosition(position)"
+                          class="text-primary-600 hover:text-primary-900 dark:text-primary-400 dark:hover:text-primary-300"
+                        >
+                          {{ position.symbol }}
+                        </button>
+                      </div>
                     </td>
                     <td class="px-3 py-2 text-sm">
                       <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
@@ -683,43 +723,54 @@
                       </template>
                     </td>
                     <td class="px-3 py-2 text-sm text-gray-500 dark:text-gray-400 text-right">
-                      {{ position.trades.length }} {{ position.trades.length === 1 ? 'trade' : 'trades' }}
-                    </td>
-                    <td class="px-3 py-2 text-sm text-right">
-                      <router-link
-                        v-if="position.trades.length === 1"
-                        :to="`/trades/${position.trades[0].id}`"
-                        class="text-primary-600 hover:text-primary-900 dark:hover:text-primary-400 font-medium text-xs"
-                      >
-                        View
-                      </router-link>
-                      <span v-else class="text-xs text-gray-400">Position Total</span>
+                      {{ getOpenPositionDetailSummary(position) }}
                     </td>
                   </tr>
                   
-                  <!-- Individual Trade Rows (only show when position has multiple trades) -->
-                  <tr v-if="position.trades.length > 1" v-for="trade in position.trades" :key="trade.id" class="hover:bg-gray-50 dark:hover:bg-gray-800">
+                  <!-- Individual Trade Rows (only show when expanded) -->
+                  <tr
+                    v-if="hasOpenPositionDetails(position) && isOpenPositionExpanded(position)"
+                    v-for="detail in getOpenPositionDetailRows(position)"
+                    :key="detail.id"
+                    class="hover:bg-gray-50 dark:hover:bg-gray-800"
+                  >
                     <td class="px-3 py-2 text-sm text-gray-500 dark:text-gray-400 pl-6">
-                      <span class="text-xs">└─</span> Trade #{{ trade.id }}
+                      <span class="text-xs">└─</span>
+                      <span class="ml-1">{{ detail.label }}</span>
                     </td>
                     <td class="px-3 py-2 text-sm">
                       <span class="px-1.5 inline-flex text-xs leading-4 font-medium rounded"
                         :class="[
-                          trade.side === 'long' 
+                          detail.side === 'long' 
                             ? 'bg-green-50 text-green-700 dark:bg-green-900/10 dark:text-green-400'
                             : 'bg-red-50 text-red-700 dark:bg-red-900/10 dark:text-red-400'
                         ]">
-                        {{ trade.side }}
+                        {{ detail.side }}
                       </span>
                     </td>
                     <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 text-right">
-                      {{ (trade.quantity || 0).toLocaleString() }}
+                      {{ formatPositionQuantity(detail.quantity || 0, position) }}
                     </td>
                     <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 text-right">
-                      ${{ formatCurrency(trade.entry_price) }}
+                      <span v-if="detail.runningQuantity !== null">
+                        {{ formatPositionQuantity(detail.runningQuantity, position) }}
+                      </span>
+                      <span v-else class="text-xs text-gray-400">-</span>
                     </td>
                     <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 text-right">
-                      ${{ formatCurrency(trade.entry_price * trade.quantity) }}
+                      <span v-if="detail.price !== null">
+                        ${{ formatCurrency(detail.price) }}
+                      </span>
+                      <span v-else class="text-xs text-gray-400">-</span>
+                    </td>
+                    <td class="px-3 py-2 text-sm text-gray-700 dark:text-gray-300 text-right">
+                      <span
+                        v-if="detail.totalCost !== null"
+                        :class="detail.totalCost < 0 ? 'text-red-500 dark:text-red-400' : ''"
+                      >
+                        {{ formatSignedCurrency(detail.totalCost) }}
+                      </span>
+                      <span v-else class="text-xs text-gray-400">-</span>
                     </td>
                     <td class="px-3 py-2 text-sm text-gray-400 text-right">
                       <span class="text-xs">-</span>
@@ -731,15 +782,7 @@
                       <span class="text-xs">-</span>
                     </td>
                     <td class="px-3 py-2 text-sm text-gray-500 dark:text-gray-400 text-right">
-                      {{ formatDate(trade.trade_date) }}
-                    </td>
-                    <td class="px-3 py-2 text-sm text-right">
-                      <router-link
-                        :to="`/trades/${trade.id}`"
-                        class="text-primary-600 hover:text-primary-900 dark:hover:text-primary-400 font-medium text-xs"
-                      >
-                        View
-                      </router-link>
+                      {{ formatDate(detail.tradeDate) }}
                     </td>
                   </tr>
                 </template>
@@ -1256,7 +1299,7 @@ import TradeNewsSection from '@/components/dashboard/TradeNewsSection.vue'
 import UpcomingEarningsSection from '@/components/dashboard/UpcomingEarningsSection.vue'
 import TodaysJournalEntry from '@/components/diary/TodaysJournalEntry.vue'
 import MdiIcon from '@/components/MdiIcon.vue'
-import { mdiCheckCircle } from '@mdi/js'
+import { mdiCheckCircle, mdiChevronRight } from '@mdi/js'
 import { getRefreshInterval, shouldRefreshPrices, getMarketStatus } from '@/utils/marketHours'
 import YearWrappedBanner from '@/components/yearWrapped/YearWrappedBanner.vue'
 import YearWrappedModal from '@/components/yearWrapped/YearWrappedModal.vue'
@@ -1293,6 +1336,7 @@ const calculationMethod = computed(() => {
   return userSettings.value?.statisticsCalculation === 'median' ? 'Median' : 'Average'
 })
 const openTrades = ref([])
+const expandedOpenPositions = ref({})
 const quotesLoading = ref(false) // True while Finnhub quotes are being fetched
 const analyticsLoading = ref(true) // True while analytics data is being fetched
 
@@ -1332,6 +1376,155 @@ function getOptionPnL(position) {
     : currentValue - position.totalCost
   const unrealizedPnLPercent = position.totalCost !== 0 ? (unrealizedPnL / position.totalCost) * 100 : 0
   return { currentValue, unrealizedPnL, unrealizedPnLPercent }
+}
+
+function getOpenPositionUiKey(position) {
+  if (!position) return ''
+  if (position.instrumentType === 'option') {
+    return [
+      position.symbol || '',
+      position.underlying_symbol || '',
+      position.strike_price || '',
+      position.expiration_date || '',
+      position.option_type || ''
+    ].join(':')
+  }
+  return position.symbol || ''
+}
+
+function getTradeReferenceLabel(trade) {
+  return `Trade #${trade.id}`
+}
+
+function getOpenPositionDetailRows(position) {
+  if (!position?.trades || !Array.isArray(position.trades)) {
+    return []
+  }
+
+  const details = position.trades.flatMap((trade, tradeIndex) => {
+    const executions = Array.isArray(trade.executions)
+      ? trade.executions.filter(execution => (parseFloat(execution?.quantity) || 0) > 0)
+      : []
+
+    if (executions.length > 0) {
+      let entryIndex = 0
+      let exitIndex = 0
+
+      return executions.map((execution, executionIndex) => {
+        const type = String(execution?.type || '').toLowerCase()
+        if (type === 'exit') {
+          exitIndex += 1
+        } else {
+          entryIndex += 1
+        }
+
+        const normalizedType = type === 'exit' ? 'exit' : 'entry'
+        const labelIndex = normalizedType === 'exit' ? exitIndex : entryIndex
+
+        return {
+          id: `${trade.id || tradeIndex}-execution-${executionIndex}`,
+          label: `${normalizedType === 'exit' ? 'Exit' : 'Entry'} ${labelIndex}`,
+          side: trade.side,
+          quantity: parseFloat(execution?.quantity) || 0,
+          signedQuantity: normalizedType === 'exit'
+            ? -(parseFloat(execution?.quantity) || 0)
+            : (parseFloat(execution?.quantity) || 0),
+          price: parseFloat(execution?.price) || null,
+          totalCost: execution?.price !== undefined && execution?.price !== null
+            ? (normalizedType === 'exit' ? -1 : 1) * ((parseFloat(execution.price) || 0) * (parseFloat(execution.quantity) || 0))
+            : null,
+          tradeDate: execution?.datetime || trade.trade_date,
+          type: normalizedType,
+          tradeId: trade.id || null
+        }
+      })
+    }
+
+    return [{
+      id: `${trade.id || tradeIndex}-trade`,
+      label: getTradeReferenceLabel(trade),
+      side: trade.side,
+      quantity: parseFloat(trade.quantity) || 0,
+      signedQuantity: parseFloat(trade.quantity) || 0,
+      price: parseFloat(trade.entry_price) || null,
+      totalCost: (parseFloat(trade.entry_price) || 0) * (parseFloat(trade.quantity) || 0),
+      tradeDate: trade.trade_date,
+      type: 'trade',
+      tradeId: trade.id || null
+    }]
+  })
+
+  const sortedDetails = [...details].sort((a, b) => {
+    const timeA = new Date(a.tradeDate || 0).getTime()
+    const timeB = new Date(b.tradeDate || 0).getTime()
+    if (timeA !== timeB) return timeA - timeB
+    return String(a.id).localeCompare(String(b.id))
+  })
+
+  let runningQuantity = 0
+  return sortedDetails.map(detail => {
+    const delta = Number.isFinite(parseFloat(detail.signedQuantity))
+      ? parseFloat(detail.signedQuantity)
+      : 0
+    runningQuantity += delta
+
+    return {
+      ...detail,
+      runningQuantity
+    }
+  })
+}
+
+function getOpenPositionDetailSummary(position) {
+  const details = getOpenPositionDetailRows(position)
+  if (details.length === 0) return '0 entries'
+
+  const entryCount = details.filter(detail => detail.type === 'entry' || detail.type === 'trade').length
+  const exitCount = details.filter(detail => detail.type === 'exit').length
+
+  if (exitCount === 0) {
+    return `${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}`
+  }
+
+  if (entryCount === 0) {
+    return `${exitCount} ${exitCount === 1 ? 'exit' : 'exits'}`
+  }
+
+  return `${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}, ${exitCount} ${exitCount === 1 ? 'exit' : 'exits'}`
+}
+
+function formatSignedPositionQuantity(quantity, position) {
+  const numericQuantity = parseFloat(quantity)
+  if (!Number.isFinite(numericQuantity) || numericQuantity === 0) {
+    return formatPositionQuantity(0, position)
+  }
+
+  const prefix = numericQuantity > 0 ? '+' : '-'
+  return `${prefix}${formatPositionQuantity(Math.abs(numericQuantity), position)}`
+}
+
+function formatSignedCurrency(value) {
+  const numericValue = parseFloat(value)
+  if (!Number.isFinite(numericValue) || numericValue === 0) {
+    return '$0.00'
+  }
+
+  const prefix = numericValue > 0 ? '+' : '-'
+  return `${prefix}$${formatCurrency(Math.abs(numericValue))}`
+}
+
+function hasOpenPositionDetails(position) {
+  return getOpenPositionDetailRows(position).length > 0
+}
+
+function isOpenPositionExpanded(position) {
+  return expandedOpenPositions.value[getOpenPositionUiKey(position)] === true
+}
+
+function toggleOpenPositionDetails(position) {
+  const key = getOpenPositionUiKey(position)
+  if (!key) return
+  expandedOpenPositions.value[key] = !expandedOpenPositions.value[key]
 }
 
 const filters = ref({
@@ -1510,6 +1703,15 @@ watch(dashboardLayout, () => {
     saveDashboardLayout()
   }, 1000) // Save 1 second after user stops making changes
 }, { deep: true })
+
+watch(openTrades, positions => {
+  const validKeys = new Set((positions || []).map(getOpenPositionUiKey).filter(Boolean))
+  Object.keys(expandedOpenPositions.value).forEach(key => {
+    if (!validKeys.has(key)) {
+      delete expandedOpenPositions.value[key]
+    }
+  })
+}, { deep: false })
 
 // Stable symbol list - only updates the ref when symbols actually change.
 // This prevents child components (UpcomingEarnings, TradeNews) from re-fetching
@@ -2184,16 +2386,15 @@ function navigateToTradesWithSymbol(symbol) {
   })
 }
 
-function navigateToTrade(tradeId) {
-  console.log('navigateToTrade called with:', tradeId)
-  if (!tradeId) {
-    console.error('Trade ID is missing! Cannot navigate.')
-    alert('This trade cannot be opened - ID is missing. The backend needs to be updated.')
-    return
-  }
+function navigateToOpenPosition(position) {
+  const symbol = position?.symbol
+  if (!symbol) return
+
   router.push({
-    name: 'trade-detail',
-    params: { id: tradeId }
+    name: 'holding-detail',
+    params: { id: `trade-${symbol}` }
+  }).then(() => {
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   })
 }
 

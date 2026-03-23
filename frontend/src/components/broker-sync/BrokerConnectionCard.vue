@@ -78,8 +78,8 @@
           <div class="text-gray-500 dark:text-gray-400">
             <template v-if="connection.lastSyncAt">
               Last synced: {{ formatDate(connection.lastSyncAt) }}
-              <span v-if="connection.lastSyncTradesImported" class="text-green-600 dark:text-green-400">
-                ({{ connection.lastSyncTradesImported }} imported)
+              <span class="text-green-600 dark:text-green-400">
+                ({{ connection.syncedTradeCount || 0 }} synced)
               </span>
             </template>
             <template v-else>

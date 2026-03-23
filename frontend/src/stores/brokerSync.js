@@ -292,6 +292,7 @@ export const useBrokerSyncStore = defineStore('brokerSync', () => {
 
     try {
       const response = await api.delete(`/broker-sync/connections/${connectionId}/trades`)
+      await fetchConnections()
       return response.data
     } catch (err) {
       console.error('[BROKER-SYNC] Failed to delete broker trades:', err)
