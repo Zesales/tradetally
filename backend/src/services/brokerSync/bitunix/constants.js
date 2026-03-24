@@ -1,0 +1,19 @@
+const BITUNIX_API_BASE = 'https://fapi.bitunix.com';
+const BITUNIX_SPOT_API_BASE = 'https://openapi.bitunix.com';
+const DEFAULT_MARGIN_COIN = 'USDT';
+const FUNDING_HISTORY_START_DATE = '2020-01-01T00:00:00.000Z';
+const PAGE_SIZE = 100;
+const STABLECOIN_TO_CURRENCY = {
+  USDT: 'USD',
+  USDC: 'USD',
+  USD: 'USD'
+};
+
+module.exports = {
+  BITUNIX_API_BASE,
+  BITUNIX_SPOT_API_BASE,
+  DEFAULT_MARGIN_COIN,
+  FUNDING_HISTORY_START_DATE,
+  PAGE_SIZE,
+  STABLECOIN_TO_CURRENCY
+};

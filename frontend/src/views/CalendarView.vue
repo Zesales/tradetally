@@ -295,6 +295,7 @@ import { format, startOfYear, endOfYear, eachMonthOfInterval, startOfMonth, endO
 import { ChevronLeftIcon, ChevronRightIcon, XMarkIcon, ArrowsPointingOutIcon, ArrowsPointingInIcon } from '@heroicons/vue/24/outline'
 import api from '@/services/api'
 import { useGlobalAccountFilter } from '@/composables/useGlobalAccountFilter'
+import { formatCalendarCurrency } from '@/utils/numberFormatting'
 
 const { selectedAccount } = useGlobalAccountFilter()
 
@@ -654,37 +655,6 @@ function changeMonth(direction) {
     localStorage.setItem('calendar_expanded_month', expandedMonth.value.toISOString())
     localStorage.setItem('calendar_expanded_year', currentYear.value.toString())
   }
-}
-
-function formatNumber(num, decimals = 2) {
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
-  }).format(num || 0)
-}
-
-function getCalendarCurrencyDecimals(num) {
-  const absoluteValue = Math.abs(parseFloat(num) || 0)
-
-  if (absoluteValue < 100) {
-    return 2
-  }
-
-  if (absoluteValue < 1000) {
-    return 1
-  }
-
-  return 0
-}
-
-function formatCalendarCurrency(num) {
-  const value = parseFloat(num) || 0
-  const decimals = getCalendarCurrencyDecimals(value)
-
-  return new Intl.NumberFormat('en-US', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: decimals
-  }).format(value)
 }
 
 function formatRValue(num, decimals = 2) {
