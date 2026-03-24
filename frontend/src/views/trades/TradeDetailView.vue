@@ -320,6 +320,68 @@
             <div class="card-body">
               <h3 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Quality Metrics Breakdown</h3>
 
+              <div
+                v-if="showProminentQualitySourceCoverage"
+                class="mb-5 rounded-xl border p-4"
+                :class="qualitySourceCoverageCardClass"
+              >
+                <div class="flex items-start justify-between gap-4">
+                  <div>
+                    <p class="text-xs font-semibold uppercase tracking-wide" :class="qualitySourceCoverageEyebrowClass">
+                      Source Coverage
+                    </p>
+                    <h4 class="mt-1 text-sm font-semibold text-gray-900 dark:text-white">
+                      {{ qualitySourceCoverageHeadline }}
+                    </h4>
+                    <p class="mt-1 text-sm text-gray-700 dark:text-gray-300">
+                      {{ qualitySourceCoverageSummary }}
+                    </p>
+                  </div>
+                  <div
+                    v-if="trade.qualityMetrics?.confidenceScore !== null && trade.qualityMetrics?.confidenceScore !== undefined"
+                    class="text-right shrink-0"
+                  >
+                    <div class="text-xl font-bold text-gray-900 dark:text-white">
+                      {{ Math.round(Number(trade.qualityMetrics.confidenceScore) * 100) }}%
+                    </div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400">
+                      Confidence
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mt-3 flex flex-wrap gap-2">
+                  <span
+                    v-for="source in trade.qualityMetrics?.sourceSummary?.requested || []"
+                    :key="source"
+                    class="px-2.5 py-1 text-xs font-medium rounded-full"
+                    :class="qualitySourceChipClass(source)"
+                  >
+                    {{ formatQualitySourceLabel(source) }}
+                  </span>
+                </div>
+
+                <div v-if="qualitySourceCoverageDetails.length" class="mt-3 space-y-1.5">
+                  <p
+                    v-for="detail in qualitySourceCoverageDetails"
+                    :key="detail"
+                    class="text-xs text-gray-700 dark:text-gray-300"
+                  >
+                    {{ detail }}
+                  </p>
+                </div>
+
+                <div v-if="trade.qualityMetrics?.warnings?.length" class="mt-3 space-y-1.5">
+                  <p
+                    v-for="warning in trade.qualityMetrics.warnings"
+                    :key="warning"
+                    class="text-xs font-medium text-gray-800 dark:text-gray-200"
+                  >
+                    {{ warning }}
+                  </p>
+                </div>
+              </div>
+
               <div class="space-y-4">
                 <!-- News Sentiment (35% weight) -->
                 <div class="border-l-4 pl-4 py-2"
@@ -1275,6 +1337,154 @@ const hasIncompleteQuality = computed(() => {
 
   return hasNullMetrics
 })
+
+const showProminentQualitySourceCoverage = computed(() => {
+  const metrics = trade.value?.qualityMetrics
+  return metrics?.model === 'crypto' && !!metrics?.sourceSummary
+})
+
+const qualitySourceCoverageHeadline = computed(() => {
+  const metrics = trade.value?.qualityMetrics
+  if (!metrics?.sourceSummary) return 'No source coverage details available.'
+
+  if (metrics.sourceCalculationStatus === 'full_source_calculation') {
+    return 'This crypto grade is backed by two aligned market data sources.'
+  }
+
+  if (metrics.sourceCalculationStatus === 'partial_source_calculation') {
+    return 'This crypto grade used partial source coverage.'
+  }
+
+  if (metrics.sourceCalculationStatus === 'poor_source_calculation') {
+    return 'This crypto grade has reduced source reliability.'
+  }
+
+  return 'This crypto grade includes source coverage details.'
+})
+
+const qualitySourceCoverageCardClass = computed(() => {
+  const status = trade.value?.qualityMetrics?.sourceCalculationStatus
+
+  if (status === 'full_source_calculation') {
+    return 'border-green-200 bg-green-50 dark:border-green-800 dark:bg-green-900/20'
+  }
+
+  if (status === 'partial_source_calculation') {
+    return 'border-yellow-200 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-900/20'
+  }
+
+  return 'border-red-200 bg-red-50 dark:border-red-800 dark:bg-red-900/20'
+})
+
+const qualitySourceCoverageEyebrowClass = computed(() => {
+  const status = trade.value?.qualityMetrics?.sourceCalculationStatus
+
+  if (status === 'full_source_calculation') {
+    return 'text-green-700 dark:text-green-300'
+  }
+
+  if (status === 'partial_source_calculation') {
+    return 'text-yellow-700 dark:text-yellow-300'
+  }
+
+  return 'text-red-700 dark:text-red-300'
+})
+
+const qualitySourceCoverageSummary = computed(() => {
+  const summary = trade.value?.qualityMetrics?.sourceSummary
+  if (!summary) return 'No source details available.'
+
+  const canonicalSource = formatQualitySourceLabel(summary.canonicalSource)
+  const succeeded = Array.isArray(summary.succeeded) ? summary.succeeded.map(formatQualitySourceLabel) : []
+
+  if (!summary.canonicalSource) {
+    return 'No market data source returned usable crypto data.'
+  }
+
+  if (succeeded.length <= 1) {
+    return `Main calculation used ${canonicalSource}. No second source was available for a cross-check.`
+  }
+
+  return `Main calculation used ${canonicalSource}. The other successful source was only used for cross-checking or selective aggregation where values matched closely.`
+})
+
+const qualitySourceCoverageDetails = computed(() => {
+  const summary = trade.value?.qualityMetrics?.sourceSummary
+  if (!summary) return []
+
+  const details = []
+  const fieldUsage = summary.fieldUsage || {}
+  const failed = Array.isArray(summary.failed) ? summary.failed : []
+  const agreementScore = summary.agreementScore
+
+  details.push(`Price candles, momentum, trend alignment and relative volume all came from ${formatQualitySourceLabel(fieldUsage.ohlcv || summary.canonicalSource)}.`)
+  details.push(`Liquidity used ${describeFieldUsage(fieldUsage.liquidity)}. Volatility used ${describeFieldUsage(fieldUsage.volatility)}.`)
+
+  if (agreementScore !== null && agreementScore !== undefined) {
+    details.push(`Cross-source agreement was ${Math.round(Number(agreementScore) * 100)}%, based on close price, daily range and previous close comparisons.`)
+  } else {
+    details.push('No cross-source agreement check was possible because only one usable source responded.')
+  }
+
+  failed.forEach(item => {
+    details.push(`${formatQualitySourceLabel(item.source)} request failed: ${formatQualityFailureReason(item.reason)}.`)
+  })
+
+  return details
+})
+
+function qualitySourceChipClass(source) {
+  const summary = trade.value?.qualityMetrics?.sourceSummary
+  const succeeded = Array.isArray(summary?.succeeded) ? summary.succeeded : []
+
+  if (succeeded.includes(source)) {
+    return 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
+  }
+
+  return 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400'
+}
+
+function formatQualitySourceLabel(source) {
+  if (!source) return 'no source'
+
+  const labels = {
+    binance: 'Binance',
+    coinbase: 'Coinbase',
+    coingecko: 'CoinGecko',
+    aggregated: 'both sources combined',
+    missing: 'missing data'
+  }
+
+  return labels[source] || source
+}
+
+function describeFieldUsage(strategy) {
+  if (!strategy) return 'an unknown source strategy'
+
+  if (strategy === 'aggregated') {
+    return 'both successful sources combined after the values were close enough'
+  }
+
+  if (strategy === 'missing') {
+    return 'no usable source data'
+  }
+
+  return `${formatQualitySourceLabel(strategy)} only`
+}
+
+function formatQualityFailureReason(reason) {
+  const normalizedReason = String(reason || '').trim().toLowerCase()
+
+  const reasonLabels = {
+    rate_limited: 'rate limit reached',
+    not_found: 'market data not found',
+    upstream_server_error: 'upstream server error',
+    timeout: 'request timed out',
+    request_failed: 'request failed'
+  }
+
+  return reasonLabels[normalizedReason] || normalizedReason || 'request failed'
+}
 
 // Ref to track if chart image failed to load
 const chartImageFailed = ref(false)
