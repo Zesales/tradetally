@@ -70,10 +70,7 @@
                     </div>
 
                     <!-- Auto-Sync Toggle -->
-                    <div
-                        v-if="connection.brokerType !== 'bitunix'"
-                        class="flex items-center justify-between"
-                    >
+                    <div class="flex items-center justify-between">
                         <div>
                             <label
                                 class="block text-sm font-medium text-gray-900 dark:text-white"
@@ -108,9 +105,7 @@
                     </div>
 
                     <!-- Sync Frequency -->
-                    <div
-                        v-if="connection.brokerType !== 'bitunix' && form.autoSyncEnabled"
-                    >
+                    <div v-if="form.autoSyncEnabled">
                         <label for="syncFrequency" class="label"
                             >Sync Frequency</label
                         >
@@ -139,7 +134,6 @@
                     <!-- Sync Time (only shown for daily frequency) -->
                     <div
                         v-if="
-                            connection.brokerType !== 'bitunix' &&
                             form.autoSyncEnabled &&
                             form.syncFrequency === 'daily'
                         "
@@ -156,19 +150,6 @@
                         >
                             Time to sync each day (in your local timezone). Only
                             applies to daily frequency.
-                        </p>
-                    </div>
-
-                    <div
-                        v-if="connection.brokerType === 'bitunix'"
-                        class="rounded-lg border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/40 p-4"
-                    >
-                        <h4 class="text-sm font-medium text-gray-900 dark:text-white">
-                            Bitunix Sync
-                        </h4>
-                        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                            Bitunix runs on a fixed automatic daily sync. If you need a newer import, use
-                            <span class="font-medium text-gray-700 dark:text-gray-200">Sync Now</span>.
                         </p>
                     </div>
 
@@ -342,15 +323,6 @@ function formatDate(date) {
 }
 
 function handleSave() {
-    if (props.connection.brokerType === "bitunix") {
-        emit("save", {
-            autoSyncEnabled: true,
-            syncFrequency: "daily",
-            syncTime: "06:00:00",
-        });
-        return;
-    }
-
     emit("save", {
         autoSyncEnabled: form.value.autoSyncEnabled,
         syncFrequency: form.value.syncFrequency,

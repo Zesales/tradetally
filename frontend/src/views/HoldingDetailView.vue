@@ -77,21 +77,18 @@
 
                     <div class="flex items-center space-x-3">
                         <button
-                            v-if="canEditHolding"
                             @click="showAddLot = true"
                             class="btn-secondary"
                         >
                             Add Shares
                         </button>
                         <button
-                            v-if="canEditHolding"
                             @click="showRecordDividend = true"
                             class="btn-secondary"
                         >
                             Record Dividend
                         </button>
                         <button
-                            v-if="canEditHolding"
                             @click="confirmDelete"
                             class="btn-secondary text-red-600 hover:text-red-700"
                         >
@@ -522,120 +519,6 @@
                         </div>
                     </div>
                 </div>
-
-                <!-- Trades Tab -->
-                <div v-if="activeTab === 'trades'">
-                    <div
-                        class="bg-white dark:bg-gray-800 shadow-sm rounded-lg overflow-hidden"
-                    >
-                        <div
-                            v-if="positionTradesLoading"
-                            class="flex items-center justify-center py-12"
-                        >
-                            <div
-                                class="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600"
-                            ></div>
-                        </div>
-                        <table
-                            v-else
-                            class="min-w-full divide-y divide-gray-200 dark:divide-gray-700"
-                        >
-                            <thead class="bg-gray-50 dark:bg-gray-700">
-                                <tr>
-                                    <th
-                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
-                                    >
-                                        Date
-                                    </th>
-                                    <th
-                                        class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
-                                    >
-                                        Side
-                                    </th>
-                                    <th
-                                        class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
-                                    >
-                                        Quantity
-                                    </th>
-                                    <th
-                                        class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
-                                    >
-                                        Entry
-                                    </th>
-                                    <th
-                                        class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
-                                    >
-                                        Exit
-                                    </th>
-                                    <th
-                                        class="px-6 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider"
-                                    >
-                                        P&L
-                                    </th>
-                                </tr>
-                            </thead>
-                            <tbody
-                                class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700"
-                            >
-                                <tr
-                                    v-for="trade in positionTrades"
-                                    :key="trade.id"
-                                    class="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700"
-                                    @click="router.push({ name: 'trade-detail', params: { id: trade.id } })"
-                                >
-                                    <td
-                                        class="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white"
-                                    >
-                                        {{ formatDate(trade.trade_date || trade.entry_time) }}
-                                    </td>
-                                    <td class="px-6 py-4 whitespace-nowrap text-sm">
-                                        <span
-                                            class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
-                                            :class="[
-                                                trade.side === 'long'
-                                                    ? 'bg-green-100 text-green-800 dark:bg-green-900/20 dark:text-green-400'
-                                                    : 'bg-red-100 text-red-800 dark:bg-red-900/20 dark:text-red-400',
-                                            ]"
-                                        >
-                                            {{ trade.side }}
-                                        </span>
-                                    </td>
-                                    <td
-                                        class="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-white"
-                                    >
-                                        {{ formatNumber(trade.quantity) }}
-                                    </td>
-                                    <td
-                                        class="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-white"
-                                    >
-                                        {{ formatCurrency(trade.entry_price) }}
-                                    </td>
-                                    <td
-                                        class="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 dark:text-white"
-                                    >
-                                        {{ trade.exit_price ? formatCurrency(trade.exit_price) : "-" }}
-                                    </td>
-                                    <td
-                                        class="px-6 py-4 whitespace-nowrap text-sm text-right"
-                                        :class="[
-                                            (trade.pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600',
-                                        ]"
-                                    >
-                                        {{ trade.pnl !== null && trade.pnl !== undefined ? formatCurrency(trade.pnl) : "-" }}
-                                    </td>
-                                </tr>
-                                <tr v-if="positionTrades.length === 0">
-                                    <td
-                                        colspan="6"
-                                        class="px-6 py-8 text-center text-gray-500 dark:text-gray-400"
-                                    >
-                                        No trades found for this position.
-                                    </td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -698,7 +581,6 @@ import { ref, computed, onMounted, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useInvestmentsStore } from "@/stores/investments";
 import { useNotification } from "@/composables/useNotification";
-import api from "@/services/api";
 import { format, parseISO } from "date-fns";
 import EightPillarsCard from "@/components/investments/EightPillarsCard.vue";
 import AddLotModal from "@/components/investments/AddLotModal.vue";
@@ -712,7 +594,6 @@ const { showDangerConfirmation } = useNotification();
 const holding = ref(null);
 const lots = ref([]);
 const dividends = ref([]);
-const positionTrades = ref([]);
 const profile = ref(null);
 const analysis = ref(null);
 const notes = ref("");
@@ -720,7 +601,6 @@ const notes = ref("");
 const loading = ref(false);
 const error = ref(null);
 const analysisLoading = ref(false);
-const positionTradesLoading = ref(false);
 const savingNotes = ref(false);
 
 const activeTab = ref("lots");
@@ -728,25 +608,12 @@ const showAddLot = ref(false);
 const showRecordDividend = ref(false);
 const showDeleteConfirm = ref(false);
 
-const canEditHolding = computed(
-    () => holding.value && holding.value.source !== "trades",
-);
-
-const tabs = computed(() => {
-    if (holding.value?.source === "trades") {
-        return [
-            { id: "trades", name: "Trades", count: positionTrades.value.length },
-            { id: "analysis", name: "8 Pillars" },
-        ];
-    }
-
-    return [
-        { id: "lots", name: "Purchase Lots", count: lots.value.length },
-        { id: "dividends", name: "Dividends", count: dividends.value.length },
-        { id: "analysis", name: "8 Pillars" },
-        { id: "notes", name: "Notes" },
-    ];
-});
+const tabs = computed(() => [
+    { id: "lots", name: "Purchase Lots", count: lots.value.length },
+    { id: "dividends", name: "Dividends", count: dividends.value.length },
+    { id: "analysis", name: "8 Pillars" },
+    { id: "notes", name: "Notes" },
+]);
 
 const totalDividends = computed(() => {
     return dividends.value.reduce((sum, d) => sum + (d.amount || 0), 0);
@@ -781,56 +648,29 @@ async function loadHolding() {
         holding.value = await investmentsStore.getHolding(id);
         notes.value = holding.value.notes || "";
 
-        if (holding.value.source === "trades") {
-            activeTab.value = "trades";
-        } else if (activeTab.value === "trades") {
-            activeTab.value = "lots";
-        }
+        // Load lots and dividends in parallel
+        const [lotsData, dividendsData] = await Promise.all([
+            investmentsStore.getLots(id),
+            investmentsStore.getDividends(id),
+        ]);
 
-        if (holding.value.source === "trades") {
-            lots.value = [];
-            dividends.value = [];
-            positionTradesLoading.value = true;
-            try {
-                const response = await api.get("/trades", {
-                    params: {
-                        symbol: holding.value.symbol,
-                        symbolExact: true,
-                        limit: 200,
-                        offset: 0,
-                    },
-                });
-                positionTrades.value = response.data?.trades || [];
-            } finally {
-                positionTradesLoading.value = false;
-            }
-        } else {
-            positionTrades.value = [];
+        // Calculate lot-level P&L
+        lots.value = lotsData.map((lot) => {
+            const currentPrice = holding.value.currentPrice || 0;
+            const currentValue = lot.shares * currentPrice;
+            const gainLoss = currentValue - lot.totalCost;
+            const gainLossPercent =
+                lot.totalCost > 0 ? (gainLoss / lot.totalCost) * 100 : 0;
 
-            // Load lots and dividends in parallel
-            const [lotsData, dividendsData] = await Promise.all([
-                investmentsStore.getLots(id),
-                investmentsStore.getDividends(id),
-            ]);
+            return {
+                ...lot,
+                currentValue,
+                gainLoss,
+                gainLossPercent,
+            };
+        });
 
-            // Calculate lot-level P&L
-            lots.value = lotsData.map((lot) => {
-                const currentPrice = holding.value.currentPrice || 0;
-                const currentValue = lot.shares * currentPrice;
-                const gainLoss = currentValue - lot.totalCost;
-                const gainLossPercent =
-                    lot.totalCost > 0 ? (gainLoss / lot.totalCost) * 100 : 0;
-
-                return {
-                    ...lot,
-                    currentValue,
-                    gainLoss,
-                    gainLossPercent,
-                };
-            });
-
-            dividends.value = dividendsData;
-        }
+        dividends.value = dividendsData;
 
         // Load company profile
         try {

@@ -472,7 +472,7 @@
                                 <td
                                     class="px-6 py-4 whitespace-nowrap text-right text-sm"
                                 >
-                                    <div
+                                    <span
                                         v-if="holding.unrealizedPnl !== null"
                                         :class="
                                             holding.unrealizedPnl >= 0
@@ -492,22 +492,10 @@
                                                 )
                                             }})</span
                                         >
-                                    </div>
+                                    </span>
                                     <span v-else class="text-gray-400"
                                         >N/A</span
                                     >
-                                    <div
-                                        v-if="holding.source === 'trades'"
-                                        class="text-xs mt-1"
-                                        :class="
-                                            (holding.realizedPnl || 0) >= 0
-                                                ? 'text-green-500 dark:text-green-400'
-                                                : 'text-red-500 dark:text-red-400'
-                                        "
-                                    >
-                                        Realized:
-                                        {{ formatCurrency(holding.realizedPnl || 0) }}
-                                    </div>
                                 </td>
                                 <td
                                     class="px-6 py-4 whitespace-nowrap text-right text-sm space-x-2"
@@ -940,7 +928,6 @@ import ScannerResultsTable from "@/components/investments/scanner/ScannerResults
 import ScanStatusBadge from "@/components/investments/scanner/ScanStatusBadge.vue";
 import StockAnalyzerSection from "@/components/investments/dcf/StockAnalyzerSection.vue";
 import { useScannerStore } from "@/stores/scanner";
-import { buildPositionDetailRoute } from "@/utils/positionsView";
 
 const router = useRouter();
 const route = useRoute();
@@ -1102,15 +1089,7 @@ function addToHoldings(analysis) {
 }
 
 function viewHolding(holding) {
-    if (holding?.source === "trades") {
-        router.push(buildPositionDetailRoute(holding.id));
-        return;
-    }
-
-    router.push({
-        name: "holding-detail",
-        params: { id: holding.id },
-    });
+    router.push({ name: "holding-detail", params: { id: holding.id } });
 }
 
 async function toggleFavorite(symbol) {

@@ -74,14 +74,40 @@
               </select>
             </div>
 
-            <div class="p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
-              <label class="block text-sm font-medium text-gray-900 dark:text-white">
-                Automatic Sync
-              </label>
-              <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                Bitunix sync is handled automatically once per day. If you need fresher data, you can still use
-                <span class="font-medium text-gray-700 dark:text-gray-200">Sync Now</span>.
-              </p>
+            <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700/50 rounded-lg">
+              <div>
+                <label class="block text-sm font-medium text-gray-900 dark:text-white">
+                  Auto-Sync
+                </label>
+                <p class="text-sm text-gray-500 dark:text-gray-400">
+                  Automatically sync Bitunix trades daily
+                </p>
+              </div>
+              <button
+                type="button"
+                @click="form.auto_sync_enabled = !form.auto_sync_enabled"
+                :class="[
+                  form.auto_sync_enabled ? 'bg-primary-600' : 'bg-gray-200 dark:bg-gray-600',
+                  'relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-primary-600 focus:ring-offset-2'
+                ]"
+              >
+                <span
+                  :class="[
+                    form.auto_sync_enabled ? 'translate-x-5' : 'translate-x-0',
+                    'pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out'
+                  ]"
+                />
+              </button>
+            </div>
+
+            <div v-if="form.auto_sync_enabled">
+              <label for="sync_time" class="label">Sync Time</label>
+              <input
+                id="sync_time"
+                v-model="form.sync_time"
+                type="time"
+                class="input"
+              />
             </div>
           </form>
         </div>
@@ -126,7 +152,10 @@ const emit = defineEmits(['close', 'save'])
 const form = ref({
   api_key: '',
   api_secret: '',
-  margin_coin: 'USDT'
+  margin_coin: 'USDT',
+  auto_sync_enabled: true,
+  sync_frequency: 'daily',
+  sync_time: '06:00'
 })
 
 const isValid = computed(() => {
@@ -140,9 +169,9 @@ function handleSubmit() {
     api_key: form.value.api_key,
     api_secret: form.value.api_secret,
     margin_coin: form.value.margin_coin,
-    auto_sync_enabled: true,
-    sync_frequency: 'daily',
-    sync_time: '06:00:00'
+    auto_sync_enabled: form.value.auto_sync_enabled,
+    sync_frequency: form.value.sync_frequency,
+    sync_time: `${form.value.sync_time}:00`
   })
 }
 </script>

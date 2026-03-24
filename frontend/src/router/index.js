@@ -326,22 +326,10 @@ const router = createRouter({
       meta: { requiresAuth: true, requiresTier: 'pro' }
     },
     {
-      path: '/analysis/holdings/trade-:id',
-      name: 'position-detail-legacy',
-      component: () => import('@/views/PositionDetailView.vue'),
-      meta: { requiresAuth: true }
-    },
-    {
       path: '/analysis/holdings/:id',
       name: 'holding-detail',
       component: () => import('@/views/HoldingDetailView.vue'),
       meta: { requiresAuth: true, requiresTier: 'pro' }
-    },
-    {
-      path: '/analysis/positions/:id',
-      name: 'position-detail',
-      component: () => import('@/views/PositionDetailView.vue'),
-      meta: { requiresAuth: true }
     },
     {
       path: '/analysis/trade-management',

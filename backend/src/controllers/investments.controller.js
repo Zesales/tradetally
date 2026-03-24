@@ -445,7 +445,10 @@ const getHoldings = async (req, res) => {
  */
 const getHolding = async (req, res) => {
   try {
-    const holding = await HoldingsService.getHolding(req.user.id, req.params.id, { refreshPrices: true });
+    // Refresh price first to get current value
+    await HoldingsService.refreshHoldingPrice(req.user.id, req.params.id);
+
+    const holding = await HoldingsService.getHolding(req.user.id, req.params.id);
 
     if (!holding) {
       return res.status(404).json({ error: 'Holding not found' });

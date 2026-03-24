@@ -195,9 +195,9 @@ const brokerSyncController = {
       const normalizedApiKey = api_key;
       const normalizedApiSecret = api_secret;
       const normalizedMarginCoinInput = margin_coin || 'USDT';
-      const normalizedAutoSyncEnabled = true;
-      const normalizedSyncFrequency = 'daily';
-      const normalizedSyncTime = '06:00:00';
+      const normalizedAutoSyncEnabled = auto_sync_enabled ?? false;
+      const normalizedSyncFrequency = sync_frequency || 'daily';
+      const normalizedSyncTime = sync_time || '06:00:00';
 
       if (!normalizedApiKey || !normalizedApiSecret) {
         return res.status(400).json({
@@ -423,30 +423,18 @@ const brokerSyncController = {
         });
       }
 
-      const normalizedUpdates = connection.brokerType === 'bitunix'
-        ? {
-            autoSyncEnabled: true,
-            syncFrequency: 'daily',
-            syncTime: '06:00:00'
-          }
-        : {
-            autoSyncEnabled,
-            syncFrequency,
-            syncTime
-          };
-
       // Update settings
-      const updated = await BrokerConnection.update(id, normalizedUpdates);
+      const updated = await BrokerConnection.update(id, {
+        autoSyncEnabled,
+        syncFrequency,
+        syncTime
+      });
 
       // Recalculate next sync time
-      const effectiveAutoSyncEnabled = connection.brokerType === 'bitunix' ? true : autoSyncEnabled;
-      const effectiveSyncFrequency = connection.brokerType === 'bitunix' ? 'daily' : (syncFrequency || connection.syncFrequency);
-      const effectiveSyncTime = connection.brokerType === 'bitunix' ? '06:00:00' : (syncTime || connection.syncTime);
-
-      if (effectiveAutoSyncEnabled && effectiveSyncFrequency !== 'manual') {
+      if (autoSyncEnabled && syncFrequency !== 'manual') {
         const nextSync = BrokerConnection.calculateNextSync(
-          effectiveSyncFrequency,
-          effectiveSyncTime
+          syncFrequency || connection.syncFrequency,
+          syncTime || connection.syncTime
         );
         if (nextSync) {
           await BrokerConnection.update(id, { nextScheduledSync: nextSync });
@@ -503,7 +491,7 @@ const brokerSyncController = {
     try {
       const userId = req.user.id;
       const { id } = req.params;
-      const { startDate, endDate, forceFullSync = false } = req.body;
+      const { startDate, endDate } = req.body;
 
       // Verify ownership and get connection with credentials
       const connection = await BrokerConnection.findById(id, true);
@@ -514,10 +502,8 @@ const brokerSyncController = {
         });
       }
 
-      // Manual retries must remain possible even after a failed sync put the
-      // connection into "error". The status is a warning state, not a hard lock.
-      const manuallySyncableStatuses = new Set(['active', 'error', 'expired']);
-      if (!manuallySyncableStatuses.has(connection.connectionStatus)) {
+      // Check connection status
+      if (connection.connectionStatus !== 'active') {
         return res.status(400).json({
           success: false,
           error: `Cannot sync: connection status is ${connection.connectionStatus}`
@@ -533,8 +519,7 @@ const brokerSyncController = {
           const result = await brokerSyncService.syncConnection(id, {
             syncType: 'manual',
             startDate,
-            endDate,
-            forceFullSync
+            endDate
           });
 
           console.log(`[BROKER-SYNC] Sync completed for connection ${id}: ${result.imported || 0} imported`);

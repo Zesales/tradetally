@@ -123,8 +123,6 @@ const upload = multer({
  *               $ref: '#/components/schemas/Error'
  */
 router.get('/', flexibleAuth, requireApiScope('trades:read'), tradeController.getUserTrades);
-router.get('/positions', flexibleAuth, requireApiScope('trades:read'), tradeController.getClosedPositions);
-router.get('/positions/:id', flexibleAuth, requireApiScope('trades:read'), tradeController.getClosedPosition);
 
 /**
  * @swagger

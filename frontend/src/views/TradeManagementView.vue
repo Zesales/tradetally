@@ -439,7 +439,6 @@ function updateTradeInList(updatedTrade) {
             stop_loss: updatedTrade.stop_loss,
             take_profit: updatedTrade.take_profit,
             needs_stop_loss: !updatedTrade.stop_loss,
-            stop_loss_unavailable_from_broker: !updatedTrade.stop_loss && updatedTrade.broker === "bitunix",
             needs_take_profit: !updatedTrade.take_profit,
             can_analyze: !!updatedTrade.stop_loss,
         };

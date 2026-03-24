@@ -772,19 +772,13 @@ const tradeManagementController = {
       logger.info('[TRADE-MGMT] Query returned', result.rows.length, 'trades');
 
       // Add flags for missing data
-      const trades = result.rows.map(trade => {
-        const missingStopLoss = !trade.stop_loss;
-        const stopLossUnavailableFromBroker = missingStopLoss && trade.broker === 'bitunix';
-
-        return {
-          ...trade,
-          needs_stop_loss: missingStopLoss && !stopLossUnavailableFromBroker,
-          stop_loss_unavailable_from_broker: stopLossUnavailableFromBroker,
-          needs_take_profit: !trade.take_profit,
-          can_analyze: !!trade.stop_loss,
-          has_target_hit_data: !!trade.manual_target_hit_first || !!trade.target_hit_analysis
-        };
-      });
+      const trades = result.rows.map(trade => ({
+        ...trade,
+        needs_stop_loss: !trade.stop_loss,
+        needs_take_profit: !trade.take_profit,
+        can_analyze: !!trade.stop_loss,
+        has_target_hit_data: !!trade.manual_target_hit_first || !!trade.target_hit_analysis
+      }));
 
       // Get total count for pagination
       let countQuery = `

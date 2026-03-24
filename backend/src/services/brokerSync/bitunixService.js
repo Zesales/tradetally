@@ -20,9 +20,6 @@ const BITUNIX_SPOT_API_BASE = 'https://openapi.bitunix.com';
 const DEFAULT_MARGIN_COIN = 'USDT';
 const FUNDING_HISTORY_START_DATE = '2020-01-01T00:00:00.000Z';
 const PAGE_SIZE = 100;
-const OPEN_POSITION_RETRY_DELAY_MS = 2500;
-const OPEN_POSITION_HISTORY_LOOKBACK_DAYS = 365;
-const INCREMENTAL_SYNC_LOOKBACK_MS = 60 * 60 * 1000;
 const STABLECOIN_TO_CURRENCY = {
   USDT: 'USD',
   USDC: 'USD',
@@ -121,72 +118,6 @@ class BitunixService {
     }
   }
 
-  toBitunixTimestamp(value, { endOfDay = false } = {}) {
-    if (!value) {
-      return null;
-    }
-
-    if (value instanceof Date) {
-      return value.getTime();
-    }
-
-    const normalizedValue = String(value).trim();
-    if (!normalizedValue) {
-      return null;
-    }
-
-    const hasExplicitTime = normalizedValue.includes('T') || /\d{2}:\d{2}/.test(normalizedValue);
-    const dateValue = hasExplicitTime
-      ? new Date(normalizedValue)
-      : new Date(`${normalizedValue}${endOfDay ? 'T23:59:59.999Z' : 'T00:00:00.000Z'}`);
-
-    if (Number.isNaN(dateValue.getTime())) {
-      return null;
-    }
-
-    return dateValue.getTime();
-  }
-
-  resolveSyncWindow(connection, options = {}) {
-    const {
-      startDate,
-      endDate,
-      forceFullSync = false
-    } = options;
-
-    if (forceFullSync) {
-      return {
-        startDate: startDate || null,
-        endDate: endDate || null,
-        mode: 'full'
-      };
-    }
-
-    if (startDate || endDate) {
-      return {
-        startDate: startDate || null,
-        endDate: endDate || null,
-        mode: 'custom'
-      };
-    }
-
-    const lastSyncAt = connection?.lastSyncAt ? new Date(connection.lastSyncAt) : null;
-    if (!lastSyncAt || Number.isNaN(lastSyncAt.getTime())) {
-      return {
-        startDate: null,
-        endDate: null,
-        mode: 'full'
-      };
-    }
-
-    const lookbackStart = new Date(Math.max(lastSyncAt.getTime() - INCREMENTAL_SYNC_LOOKBACK_MS, 0));
-    return {
-      startDate: lookbackStart.toISOString(),
-      endDate: null,
-      mode: 'incremental'
-    };
-  }
-
   async getHistoryPositions(apiKey, apiSecret, { startDate, endDate } = {}) {
     const positions = [];
     let skip = 0;
@@ -198,13 +129,11 @@ class BitunixService {
         limit: PAGE_SIZE
       };
 
-      const startTime = this.toBitunixTimestamp(startDate);
-      const endTime = this.toBitunixTimestamp(endDate, { endOfDay: true });
-      if (startTime) {
-        query.startTime = startTime;
+      if (startDate) {
+        query.startTime = new Date(`${startDate}T00:00:00.000Z`).getTime();
       }
-      if (endTime) {
-        query.endTime = endTime;
+      if (endDate) {
+        query.endTime = new Date(`${endDate}T23:59:59.999Z`).getTime();
       }
 
       const result = await this.request({
@@ -296,279 +225,46 @@ class BitunixService {
     return orders;
   }
 
-  async getHistoryOrders(apiKey, apiSecret, { startDate, endDate } = {}) {
-    const orders = [];
-    let skip = 0;
-    let total = Infinity;
-
-    while (skip < total) {
-      const query = {
-        skip,
-        limit: PAGE_SIZE
-      };
-
-      const startTime = this.toBitunixTimestamp(startDate);
-      const endTime = this.toBitunixTimestamp(endDate, { endOfDay: true });
-      if (startTime) {
-        query.startTime = startTime;
-      }
-      if (endTime) {
-        query.endTime = endTime;
-      }
-
-      const result = await this.request({
-        apiKey,
-        apiSecret,
-        path: '/api/v1/futures/trade/get_history_orders',
-        query
-      });
-
-      const page = result.data?.orderList || [];
-      total = Number(result.data?.total || page.length);
-      orders.push(...page);
-
-      if (page.length < PAGE_SIZE) {
-        break;
-      }
-
-      skip += page.length;
-    }
-
-    return orders;
-  }
-
-  async getHistoryTpSlOrders(apiKey, apiSecret, { startDate, endDate } = {}) {
-    const orders = [];
-    let skip = 0;
-    let total = Infinity;
-
-    while (skip < total) {
-      const query = {
-        skip,
-        limit: PAGE_SIZE
-      };
-
-      const startTime = this.toBitunixTimestamp(startDate);
-      const endTime = this.toBitunixTimestamp(endDate, { endOfDay: true });
-      if (startTime) {
-        query.startTime = startTime;
-      }
-      if (endTime) {
-        query.endTime = endTime;
-      }
-
-      const result = await this.request({
-        apiKey,
-        apiSecret,
-        path: '/api/v1/futures/tpsl/get_history_orders',
-        query
-      });
-
-      const page = result.data?.orderList || [];
-      total = Number(result.data?.total || page.length);
-      orders.push(...page);
-
-      if (page.length < PAGE_SIZE) {
-        break;
-      }
-
-      skip += page.length;
-    }
-
-    return orders;
-  }
-
-  async safeOptionalFetch(label, fetcher) {
-    try {
-      return await fetcher();
-    } catch (error) {
-      // Bitunix does not expose every history endpoint consistently for every key/account.
-      // Missing optional order history must not break the entire trade sync.
-      console.warn(`[BITUNIX] Optional ${label} fetch failed:`, error.message);
-      return [];
-    }
-  }
-
-  async getHistoryTrades(apiKey, apiSecret, { startDate, endDate, symbol, positionId } = {}) {
+  async getHistoryTrades(apiKey, apiSecret, { startDate, endDate } = {}) {
     const trades = [];
-    const seen = new Set();
-    const startTime = this.toBitunixTimestamp(startDate);
-    let cursorEndTime = this.toBitunixTimestamp(endDate, { endOfDay: true }) || Date.now();
-    let previousOldestTime = null;
+    let skip = 0;
+    let total = Infinity;
 
-    for (let windowIndex = 0; windowIndex < 50; windowIndex++) {
-      let skip = 0;
-      let total = Infinity;
-      let windowCount = 0;
-      let oldestFillTime = null;
+    while (skip < total) {
+      const query = {
+        skip,
+        limit: PAGE_SIZE
+      };
 
-      while (skip < total) {
-        const query = {
-          skip,
-          limit: PAGE_SIZE
-        };
-
-        if (startTime) {
-          query.startTime = startTime;
-        }
-        if (cursorEndTime) {
-          query.endTime = cursorEndTime;
-        }
-        if (symbol) {
-          query.symbol = symbol;
-        }
-        if (positionId) {
-          query.positionId = positionId;
-        }
-
-        const result = await this.request({
-          apiKey,
-          apiSecret,
-          path: '/api/v1/futures/trade/get_history_trades',
-          query
-        });
-
-        const data = result.data;
-        const page = Array.isArray(data)
-          ? data
-          : (data?.tradeList || data?.orderList || data?.list || []);
-
-        if (!page.length) {
-          total = 0;
-          break;
-        }
-
-        total = Number(data?.total || page.length);
-        windowCount += page.length;
-
-        page.forEach(fill => {
-          const key = [
-            fill?.positionId || '',
-            fill?.tradeId || '',
-            fill?.orderId || '',
-            fill?.ctime || fill?.mtime || '',
-            fill?.price || '',
-            fill?.qty || ''
-          ].join(':');
-
-          if (!seen.has(key)) {
-            seen.add(key);
-            trades.push(fill);
-          }
-
-          const fillTime = Number(fill?.ctime || fill?.mtime);
-          if (Number.isFinite(fillTime)) {
-            oldestFillTime = oldestFillTime === null ? fillTime : Math.min(oldestFillTime, fillTime);
-          }
-        });
-
-        if (page.length < PAGE_SIZE) {
-          break;
-        }
-
-        skip += page.length;
-
-        // Bitunix appears to cap total/result windows in some cases.
-        // Fall back to time-based pagination instead of trusting total blindly.
-        if (!Number.isFinite(total) || total <= PAGE_SIZE) {
-          break;
-        }
+      if (startDate) {
+        query.startTime = new Date(`${startDate}T00:00:00.000Z`).getTime();
+      }
+      if (endDate) {
+        query.endTime = new Date(`${endDate}T23:59:59.999Z`).getTime();
       }
 
-      if (oldestFillTime === null) {
+      const result = await this.request({
+        apiKey,
+        apiSecret,
+        path: '/api/v1/futures/trade/get_history_trades',
+        query
+      });
+
+      const data = result.data;
+      const page = Array.isArray(data)
+        ? data
+        : (data?.tradeList || data?.orderList || data?.list || []);
+      total = Number(data?.total || page.length);
+      trades.push(...page);
+
+      if (page.length < PAGE_SIZE) {
         break;
       }
 
-      if (startTime !== null && oldestFillTime <= startTime) {
-        break;
-      }
-
-      if (windowCount < PAGE_SIZE) {
-        break;
-      }
-
-      if (previousOldestTime !== null && oldestFillTime >= previousOldestTime) {
-        break;
-      }
-
-      previousOldestTime = oldestFillTime;
-      cursorEndTime = oldestFillTime - 1;
+      skip += page.length;
     }
 
     return trades;
-  }
-
-  deriveHistoryStartDateFromTimestamp(timestamp, fallbackStartDate = null) {
-    if (fallbackStartDate) {
-      return fallbackStartDate;
-    }
-
-    const normalizedTimestamp = Number(timestamp);
-    if (!Number.isFinite(normalizedTimestamp) || normalizedTimestamp <= 0) {
-      return null;
-    }
-
-    const lookbackStart = normalizedTimestamp - (OPEN_POSITION_HISTORY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
-    const floorStart = new Date(FUNDING_HISTORY_START_DATE).getTime();
-    return new Date(Math.max(lookbackStart, floorStart)).toISOString().slice(0, 10);
-  }
-
-  deriveHistoryStartDateForPendingPosition(position, fallbackStartDate = null) {
-    return this.deriveHistoryStartDateFromTimestamp(position?.ctime, fallbackStartDate);
-  }
-
-  getUniquePendingPositionTargets(pendingPositions = []) {
-    return Array.from(new Map(
-      (pendingPositions || [])
-        .filter(position => position?.positionId && position?.symbol)
-        .map(position => [String(position.positionId), position])
-    ).values());
-  }
-
-  async getPendingPositionHistoryTrades(apiKey, apiSecret, pendingPositions = [], { startDate, endDate } = {}) {
-    const targets = this.getUniquePendingPositionTargets(pendingPositions);
-    if (!targets.length) {
-      return [];
-    }
-
-    const allTrades = [];
-    for (const position of targets) {
-      const positionStartDate = this.deriveHistoryStartDateForPendingPosition(position, startDate);
-      const positionId = String(position.positionId);
-      const positionTrades = await this.getHistoryTrades(apiKey, apiSecret, {
-        startDate: positionStartDate,
-        endDate,
-        symbol: this.normalizeSymbol(position.symbol),
-        positionId
-      });
-      allTrades.push(...positionTrades.map(fill => ({
-        ...fill,
-        positionId: fill?.positionId ? String(fill.positionId) : positionId,
-        symbol: fill?.symbol || this.normalizeSymbol(position.symbol)
-      })));
-    }
-
-    return this.mergeHistoryTrades(allTrades, []);
-  }
-
-  async fetchTradeHistorySnapshot(apiKey, apiSecret, pendingPositions = [], { startDate, endDate } = {}) {
-    const effectiveHistoryStartDate = this.deriveHistoryStartDateFromPendingPositions(pendingPositions, startDate);
-
-    const [historyTrades, pendingPositionHistoryTrades] = await Promise.all([
-      this.getHistoryTrades(apiKey, apiSecret, {
-        startDate: effectiveHistoryStartDate,
-        endDate
-      }),
-      this.getPendingPositionHistoryTrades(apiKey, apiSecret, pendingPositions, {
-        startDate,
-        endDate
-      })
-    ]);
-
-    return {
-      effectiveHistoryStartDate,
-      historyTrades: this.mergeHistoryTrades(historyTrades, pendingPositionHistoryTrades)
-    };
   }
 
   async getDepositRecords(apiKey, apiSecret, { coin, startTime, endTime, limit = 100 } = {}) {
@@ -899,13 +595,12 @@ class BitunixService {
   }
 
   parsePendingTpSlOrder(order) {
-    const orderId = order?.id || order?.orderId;
-    if (!orderId || !order?.positionId || !order?.symbol) {
+    if (!order?.id || !order?.positionId || !order?.symbol) {
       return null;
     }
 
     return {
-      id: String(orderId),
+      id: String(order.id),
       positionId: String(order.positionId),
       symbol: this.normalizeSymbol(order.symbol),
       tpPrice: this.parseNumber(order.tpPrice),
@@ -918,8 +613,6 @@ class BitunixService {
       slOrderType: order.slOrderType || null,
       slOrderPrice: this.parseNumber(order.slOrderPrice),
       slQty: this.parseNumber(order.slQty),
-      createdAt: this.toIsoString(order.ctime),
-      triggerTime: this.toIsoString(order.triggerTime),
       source: 'position_tpsl'
     };
   }
@@ -940,34 +633,6 @@ class BitunixService {
 
   buildPendingTpSlIndex(pendingTpSlOrders) {
     return pendingTpSlOrders
-      .map(order => this.parsePendingTpSlOrder(order))
-      .filter(Boolean)
-      .reduce((acc, order) => {
-        const key = order.positionId;
-        if (!acc[key]) {
-          acc[key] = [];
-        }
-        acc[key].push(order);
-        return acc;
-      }, {});
-  }
-
-  buildHistoryOrdersIndex(historyOrders) {
-    return historyOrders
-      .map(order => this.parsePendingOrder(order))
-      .filter(Boolean)
-      .reduce((acc, order) => {
-        const key = order.symbol;
-        if (!acc[key]) {
-          acc[key] = [];
-        }
-        acc[key].push(order);
-        return acc;
-      }, {});
-  }
-
-  buildHistoryTpSlIndex(historyTpSlOrders) {
-    return historyTpSlOrders
       .map(order => this.parsePendingTpSlOrder(order))
       .filter(Boolean)
       .reduce((acc, order) => {
@@ -1057,33 +722,6 @@ class BitunixService {
     };
   }
 
-  getRelevantHistoricalOrders(position, historyOrdersIndex) {
-    const symbol = this.normalizeSymbol(position?.symbol);
-    const side = this.normalizePositionSide(position?.side);
-    const expectedActions = this.orderIntentByPositionSide[side] || this.orderIntentByPositionSide.long;
-    const orders = historyOrdersIndex[symbol] || [];
-    const entryTime = Number(position?.ctime);
-    const exitTime = Number(position?.mtime || position?.utime || position?.ctime);
-    const tolerance = 60 * 1000;
-
-    return orders.filter(order => {
-      if (!order?.side) {
-        return false;
-      }
-
-      const orderTime = new Date(order.createdAt || order.updatedAt || 0).getTime();
-      if (Number.isFinite(entryTime) && Number.isFinite(orderTime) && orderTime < entryTime - tolerance) {
-        return false;
-      }
-      if (Number.isFinite(exitTime) && Number.isFinite(orderTime) && orderTime > exitTime + tolerance) {
-        return false;
-      }
-
-      return order.side.toUpperCase() === expectedActions.scale_in
-        || order.side.toUpperCase() === expectedActions.reduce;
-    });
-  }
-
   calculatePositionPnl(entryPrice, exitPrice, quantity, side) {
     const parsedEntry = this.parseNumber(entryPrice);
     const parsedExit = this.parseNumber(exitPrice);
@@ -1134,9 +772,8 @@ class BitunixService {
     };
   }
 
-  buildHistoryTradesIndex(historyTrades = [], historyPositions = [], pendingPositions = []) {
-    const allKnownPositions = [...historyPositions, ...pendingPositions];
-    const positionMetaIndex = allKnownPositions.reduce((acc, position) => {
+  buildHistoryTradesIndex(historyTrades = [], historyPositions = []) {
+    const positionMetaIndex = historyPositions.reduce((acc, position) => {
       if (!position?.positionId) {
         return acc;
       }
@@ -1273,7 +910,7 @@ class BitunixService {
     ];
   }
 
-  parseClosedPosition(position, marginCoin, historyTradeIndex = {}, historyOrdersIndex = {}, historyTpSlIndex = {}) {
+  parseClosedPosition(position, marginCoin, historyTradeIndex = {}) {
     const side = this.normalizePositionSide(position.side);
     const quantity = Math.abs(parseFloat(position.maxQty || 0));
     const entryTime = this.toIsoString(position.ctime);
@@ -1295,10 +932,6 @@ class BitunixService {
     const pnlPercent = marginUsed && marginUsed > 0 && netPnl !== null
       ? (netPnl / marginUsed) * 100
       : null;
-    const positionId = String(position.positionId);
-    const relevantHistoryOrders = this.getRelevantHistoricalOrders(position, historyOrdersIndex);
-    const positionTpSlOrders = historyTpSlIndex[positionId] || [];
-    const { stopLoss, takeProfit, takeProfitTargets } = this.buildPositionTargets(positionTpSlOrders, relevantHistoryOrders);
 
     if (!position.positionId || !position.symbol || !quantity || !entryTime) {
       return null;
@@ -1312,7 +945,7 @@ class BitunixService {
         price: entryPrice,
         quantity,
         side,
-        positionId,
+        positionId: String(position.positionId),
         leverage,
         notionalValue,
         marginUsed,
@@ -1329,7 +962,7 @@ class BitunixService {
         price: exitPrice,
         quantity,
         side,
-        positionId,
+        positionId: String(position.positionId),
         leverage,
         notionalValue,
         marginUsed,
@@ -1358,22 +991,17 @@ class BitunixService {
       instrumentType: 'crypto',
       originalCurrency,
       accountIdentifier: `bitunix-${marginCoin.toLowerCase()}`,
-      stopLoss,
-      takeProfit,
-      takeProfitTargets,
+      stopLoss: null,
+      takeProfit: null,
+      takeProfitTargets: [],
       executionData: this.buildClosedPositionExecutions(position, fallbackExecutions, historyTradeIndex)
     };
   }
 
-  parsePendingPosition(position, marginCoin, pendingOrdersIndex = {}, pendingTpSlIndex = {}, historyTradeIndex = {}) {
+  parsePendingPosition(position, marginCoin, pendingOrdersIndex = {}, pendingTpSlIndex = {}) {
     const side = this.normalizePositionSide(position.side);
     const quantity = Math.abs(parseFloat(position.qty || 0));
-    const maxQuantity = Math.max(
-      quantity,
-      Math.abs(this.parseNumber(position.maxQty) || 0)
-    );
     const entryTime = this.toIsoString(position.ctime);
-    const updatedTime = this.toIsoString(position.utime || position.mtime || position.ctime);
     const originalCurrency = this.normalizeOriginalCurrency(marginCoin);
     const tradingFees = Math.abs(parseFloat(position.fee || 0));
     const fundingFees = Math.abs(parseFloat(position.funding || 0));
@@ -1395,117 +1023,6 @@ class BitunixService {
       return null;
     }
 
-    const historyExecutions = Array.isArray(historyTradeIndex[positionId])
-      ? [...historyTradeIndex[positionId]].sort((a, b) => new Date(a.datetime) - new Date(b.datetime))
-      : [];
-
-    const buildSyntheticExecution = (type, executionQuantity, datetime, extra = {}) => ({
-      type,
-      action: type === 'exit'
-        ? (side === 'short' ? 'buy' : 'sell')
-        : (side === 'short' ? 'sell' : 'buy'),
-      datetime,
-      price: type === 'entry' ? (parseFloat(position.avgOpenPrice || 0) || null) : null,
-      quantity: executionQuantity,
-      side,
-      positionId,
-      leverage,
-      notionalValue,
-      marginUsed,
-      unrealizedPnl: this.parseNumber(position.unrealizedPNL),
-      realizedPnl: this.parseNumber(position.realizedPNL),
-      liquidationPrice: this.parseNumber(position.liqPrice),
-      marginRate: this.parseNumber(position.marginRate),
-      marginMode: position.marginMode || null,
-      positionMode: position.positionMode || null,
-      pendingOrders: relevantPendingOrders,
-      positionTpSlOrders,
-      synthetic: true,
-      ...extra
-    });
-
-    const getExecutionTotals = (executions = []) => executions.reduce((acc, execution) => {
-      const qty = Math.abs(this.parseNumber(execution?.quantity) || 0);
-      const type = String(execution?.type || '').toLowerCase();
-      const action = String(execution?.action || execution?.side || '').toLowerCase();
-
-      const isEntryAction = side === 'short'
-        ? (action === 'sell' || action === 'short')
-        : (action === 'buy' || action === 'long');
-      const isExitAction = side === 'short'
-        ? (action === 'buy' || action === 'long')
-        : (action === 'sell' || action === 'short');
-
-      if (type === 'entry' || isEntryAction) {
-        acc.entry += qty;
-      } else if (type === 'exit' || isExitAction) {
-        acc.exit += qty;
-      }
-
-      return acc;
-    }, { entry: 0, exit: 0 });
-
-    const executionData = (() => {
-      const tolerance = 1e-8;
-
-      if (!historyExecutions.length) {
-        const syntheticExecutions = [
-          buildSyntheticExecution('entry', maxQuantity || quantity, entryTime, {
-            syntheticReason: 'pending-position-entry'
-          })
-        ];
-
-        const closedQuantity = Math.max((maxQuantity || quantity) - quantity, 0);
-        if (closedQuantity > tolerance) {
-          syntheticExecutions.push(
-            buildSyntheticExecution('exit', closedQuantity, updatedTime || entryTime, {
-              syntheticReason: 'pending-position-partial-close'
-            })
-          );
-        }
-
-        return syntheticExecutions;
-      }
-
-      const reconciledExecutions = [...historyExecutions];
-      const totals = getExecutionTotals(reconciledExecutions);
-      const missingEntryQuantity = Math.max(maxQuantity - totals.entry, 0);
-
-      if (missingEntryQuantity > tolerance) {
-        reconciledExecutions.unshift(
-          buildSyntheticExecution('entry', missingEntryQuantity, entryTime, {
-            syntheticReason: 'missing-entry-coverage'
-          })
-        );
-        reconciledExecutions.push(
-          buildSyntheticExecution('exit', missingEntryQuantity, updatedTime || entryTime, {
-            syntheticReason: 'missing-entry-reconciliation'
-          })
-        );
-      }
-
-      const reconciledTotals = getExecutionTotals(reconciledExecutions);
-      const netQuantity = Math.max(reconciledTotals.entry - reconciledTotals.exit, 0);
-      const missingExitQuantity = Math.max(netQuantity - quantity, 0);
-      const missingNetEntryQuantity = Math.max(quantity - netQuantity, 0);
-
-      if (missingExitQuantity > tolerance) {
-        reconciledExecutions.push(
-          buildSyntheticExecution('exit', missingExitQuantity, updatedTime || entryTime, {
-            syntheticReason: 'net-position-reconciliation'
-          })
-        );
-      } else if (missingNetEntryQuantity > tolerance) {
-        reconciledExecutions.push(
-          buildSyntheticExecution('entry', missingNetEntryQuantity, entryTime, {
-            syntheticReason: 'net-position-top-up'
-          })
-        );
-      }
-
-      return reconciledExecutions.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
-    })();
-
     return {
       symbol: this.normalizeSymbol(position.symbol),
       side,
@@ -1525,34 +1042,42 @@ class BitunixService {
       stopLoss,
       takeProfit,
       takeProfitTargets,
-      executionData
+      executionData: [
+        {
+          type: 'entry',
+          action: side === 'short' ? 'sell' : 'buy',
+          datetime: entryTime,
+          price: parseFloat(position.avgOpenPrice || 0) || null,
+          quantity,
+          side,
+          positionId,
+          leverage,
+          notionalValue,
+          marginUsed,
+          unrealizedPnl: this.parseNumber(position.unrealizedPNL),
+          realizedPnl: this.parseNumber(position.realizedPNL),
+          liquidationPrice: this.parseNumber(position.liqPrice),
+          marginRate: this.parseNumber(position.marginRate),
+          marginMode: position.marginMode || null,
+          positionMode: position.positionMode || null,
+          pendingOrders: relevantPendingOrders,
+          positionTpSlOrders
+        }
+      ]
     };
   }
 
-  parsePositions(
-    historyPositions,
-    pendingPositions,
-    pendingOrders,
-    pendingTpSlOrders,
-    marginCoin,
-    historyTrades = [],
-    historyOrders = [],
-    historyTpSlOrders = []
-  ) {
+  parsePositions(historyPositions, pendingPositions, pendingOrders, pendingTpSlOrders, marginCoin, historyTrades = []) {
     const pendingOrdersIndex = this.buildPendingOrdersIndex(pendingOrders);
     const pendingTpSlIndex = this.buildPendingTpSlIndex(pendingTpSlOrders);
-    const historyOrdersIndex = this.buildHistoryOrdersIndex(historyOrders);
-    const historyTpSlIndex = this.buildHistoryTpSlIndex(historyTpSlOrders);
-    const historyTradeIndex = this.buildHistoryTradesIndex(historyTrades, historyPositions, pendingPositions);
-    const inferredPendingPositions = this.buildInferredPendingPositions(historyTrades, historyPositions, pendingPositions);
-    const allPendingPositions = [...pendingPositions, ...inferredPendingPositions];
+    const historyTradeIndex = this.buildHistoryTradesIndex(historyTrades, historyPositions);
 
     const closedTrades = historyPositions
-      .map(position => this.parseClosedPosition(position, marginCoin, historyTradeIndex, historyOrdersIndex, historyTpSlIndex))
+      .map(position => this.parseClosedPosition(position, marginCoin, historyTradeIndex))
       .filter(Boolean);
 
-    const openTrades = allPendingPositions
-      .map(position => this.parsePendingPosition(position, marginCoin, pendingOrdersIndex, pendingTpSlIndex, historyTradeIndex))
+    const openTrades = pendingPositions
+      .map(position => this.parsePendingPosition(position, marginCoin, pendingOrdersIndex, pendingTpSlIndex))
       .filter(Boolean);
 
     return [...closedTrades, ...openTrades];
@@ -1572,146 +1097,6 @@ class BitunixService {
       minDate: dates[0],
       maxDate: dates[dates.length - 1]
     };
-  }
-
-  deriveHistoryStartDateFromPendingPositions(pendingPositions = [], fallbackStartDate = null) {
-    if (fallbackStartDate) {
-      return fallbackStartDate;
-    }
-
-    const timestamps = pendingPositions
-      .map(position => Number(position?.ctime))
-      .filter(timestamp => Number.isFinite(timestamp) && timestamp > 0);
-
-    if (!timestamps.length) {
-      return null;
-    }
-
-    return this.deriveHistoryStartDateFromTimestamp(Math.min(...timestamps));
-  }
-
-  buildInferredPendingPositions(historyTrades = [], historyPositions = [], pendingPositions = []) {
-    const knownPositionIds = new Set(
-      [...historyPositions, ...pendingPositions]
-        .map(position => position?.positionId)
-        .filter(Boolean)
-        .map(String)
-    );
-
-    const groupedFills = historyTrades.reduce((acc, fill) => {
-      if (!fill?.positionId || !fill?.symbol) {
-        return acc;
-      }
-
-      const positionId = String(fill.positionId);
-      if (knownPositionIds.has(positionId)) {
-        return acc;
-      }
-
-      if (!acc[positionId]) {
-        acc[positionId] = [];
-      }
-      acc[positionId].push(fill);
-      return acc;
-    }, {});
-
-    return Object.entries(groupedFills).map(([positionId, fills]) => {
-      const sortedFills = [...fills].sort((a, b) => Number(a.ctime || a.mtime) - Number(b.ctime || b.mtime));
-      const side = this.normalizePositionSide(sortedFills[0]?.side);
-      const parsedFills = sortedFills
-        .map(fill => this.parseHistoryTradeFill(fill, side, {
-          leverage: this.parseNumber(fill?.leverage),
-          marginMode: fill?.marginMode || null,
-          positionMode: fill?.positionMode || null,
-          liquidationPrice: this.parseNumber(fill?.liqPrice)
-        }, positionId))
-        .filter(Boolean);
-
-      if (!parsedFills.length) {
-        return null;
-      }
-
-      const totals = parsedFills.reduce((acc, fill) => {
-        const qty = Math.abs(this.parseNumber(fill?.quantity) || 0);
-        if (fill.type === 'entry') {
-          acc.entryQty += qty;
-          acc.entryNotional += qty * (this.parseNumber(fill?.price) || 0);
-        } else if (fill.type === 'exit') {
-          acc.exitQty += qty;
-        }
-        return acc;
-      }, { entryQty: 0, exitQty: 0, entryNotional: 0 });
-
-      const netQuantity = totals.entryQty - totals.exitQty;
-      if (!(netQuantity > 1e-8)) {
-        return null;
-      }
-
-      const firstFill = sortedFills[0];
-      const lastFill = sortedFills[sortedFills.length - 1];
-      const averageOpenPrice = totals.entryQty > 0
-        ? totals.entryNotional / totals.entryQty
-        : this.parseNumber(firstFill?.price);
-
-      return {
-        positionId,
-        symbol: firstFill?.symbol,
-        side,
-        qty: netQuantity,
-        maxQty: totals.entryQty,
-        ctime: firstFill?.ctime || firstFill?.mtime,
-        mtime: lastFill?.mtime || lastFill?.ctime,
-        utime: lastFill?.mtime || lastFill?.ctime,
-        avgOpenPrice: averageOpenPrice,
-        entryValue: averageOpenPrice !== null ? averageOpenPrice * netQuantity : null,
-        leverage: this.parseNumber(firstFill?.leverage),
-        margin: null,
-        marginMode: firstFill?.marginMode || null,
-        positionMode: firstFill?.positionMode || null,
-        liqPrice: this.parseNumber(firstFill?.liqPrice),
-        fee: parsedFills.reduce((sum, fill) => sum + Math.abs(this.parseNumber(fill?.fee) || 0), 0),
-        funding: 0,
-        realizedPNL: parsedFills.reduce((sum, fill) => sum + (this.parseNumber(fill?.realizedPnl) || 0), 0),
-        unrealizedPNL: null
-      };
-    }).filter(Boolean);
-  }
-
-  mergePendingPositions(primary = [], secondary = []) {
-    const merged = new Map();
-
-    [...primary, ...secondary].forEach(position => {
-      if (!position?.positionId) {
-        return;
-      }
-
-      merged.set(String(position.positionId), position);
-    });
-
-    return Array.from(merged.values());
-  }
-
-  mergeHistoryTrades(primary = [], secondary = []) {
-    const merged = new Map();
-
-    [...primary, ...secondary].forEach(fill => {
-      if (!fill) {
-        return;
-      }
-
-      const key = [
-        fill.positionId || '',
-        fill.tradeId || '',
-        fill.orderId || '',
-        fill.ctime || fill.mtime || '',
-        fill.price || '',
-        fill.qty || ''
-      ].join(':');
-
-      merged.set(key, fill);
-    });
-
-    return Array.from(merged.values());
   }
 
   async getExistingTrades(userId, incomingTrades = []) {
@@ -1821,32 +1206,6 @@ class BitunixService {
         }
       }
       return false;
-    }) || null;
-  }
-
-  findTradeByCoreFields(newTrade, existingTrades) {
-    return existingTrades.find(existing => {
-      if (String(existing.symbol || '').toUpperCase() !== String(newTrade.symbol || '').toUpperCase()) {
-        return false;
-      }
-
-      if (
-        newTrade.accountIdentifier &&
-        existing.account_identifier &&
-        newTrade.accountIdentifier !== existing.account_identifier
-      ) {
-        return false;
-      }
-
-      const existingTradeDate = existing.trade_date?.toISOString?.().split('T')[0]
-        || String(existing.trade_date || '').split('T')[0];
-      const sameTradeDate = existingTradeDate === newTrade.tradeDate;
-      const sameSide = existing.side === newTrade.side;
-      const sameQty = Math.abs((parseFloat(existing.quantity) || 0) - (parseFloat(newTrade.quantity) || 0)) < 0.000001;
-      const sameEntry = Math.abs((parseFloat(existing.entry_price) || 0) - (parseFloat(newTrade.entryPrice) || 0)) < 0.000001;
-      const sameExit = Math.abs((parseFloat(existing.exit_price) || 0) - (parseFloat(newTrade.exitPrice) || 0)) < 0.000001;
-
-      return sameTradeDate && sameSide && sameQty && sameEntry && sameExit;
     }) || null;
   }
 
@@ -1965,8 +1324,7 @@ class BitunixService {
 
     for (const tradeData of trades) {
       try {
-        const matchingTrade = this.findTradeByPositionId(tradeData, existingTrades)
-          || this.findTradeByCoreFields(tradeData, existingTrades);
+        const matchingTrade = this.findTradeByPositionId(tradeData, existingTrades);
         if (matchingTrade) {
           if (this.hasTradeChanged(matchingTrade, tradeData)) {
             await this.updateExistingTrade(userId, connectionId, matchingTrade.id, tradeData);
@@ -2033,76 +1391,28 @@ class BitunixService {
   }
 
   async syncTrades(connection, options = {}) {
-    const { syncLogId } = options;
+    const { startDate, endDate, syncLogId } = options;
     const marginCoin = String(connection.bitunixMarginCoin || DEFAULT_MARGIN_COIN).toUpperCase();
-    const syncWindow = this.resolveSyncWindow(connection, options);
-    const { startDate, endDate, mode } = syncWindow;
 
     if (syncLogId) {
-      await BrokerConnection.updateSyncLog(syncLogId, 'fetching', {
-        syncDetails: {
-          mode,
-          resolvedStartDate: startDate,
-          resolvedEndDate: endDate,
-          incrementalLookbackMinutes: mode === 'incremental' ? 60 : null
-        }
-      });
+      await BrokerConnection.updateSyncLog(syncLogId, 'fetching');
     }
 
-    console.log(`[BITUNIX] Starting ${mode} trade sync`, {
-      connectionId: connection.id,
-      startDate,
-      endDate
-    });
-
-    const pendingPositions = await this.getPendingPositions(connection.bitunixApiKey, connection.bitunixApiSecret);
-    const [{ effectiveHistoryStartDate, historyTrades }, historyPositions, pendingOrders, pendingTpSlOrders, historyOrders, historyTpSlOrders] = await Promise.all([
-      this.fetchTradeHistorySnapshot(
-        connection.bitunixApiKey,
-        connection.bitunixApiSecret,
-        pendingPositions,
-        { startDate, endDate }
-      ),
+    const [historyPositions, pendingPositions, pendingOrders, pendingTpSlOrders, historyTrades] = await Promise.all([
       this.getHistoryPositions(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate }),
+      this.getPendingPositions(connection.bitunixApiKey, connection.bitunixApiSecret),
       this.getPendingOrders(connection.bitunixApiKey, connection.bitunixApiSecret),
       this.getPendingTpSlOrders(connection.bitunixApiKey, connection.bitunixApiSecret),
-      this.safeOptionalFetch('history orders', () =>
-        this.getHistoryOrders(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate })
-      ),
-      this.safeOptionalFetch('history TP/SL orders', () =>
-        this.getHistoryTpSlOrders(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate })
-      )
+      this.getHistoryTrades(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate })
     ]);
-
-    let finalPendingPositions = pendingPositions;
-    let finalHistoryTrades = historyTrades;
-
-    await new Promise(resolve => setTimeout(resolve, OPEN_POSITION_RETRY_DELAY_MS));
-
-    try {
-      const retryPendingPositions = await this.getPendingPositions(connection.bitunixApiKey, connection.bitunixApiSecret);
-      const { historyTrades: retryHistoryTrades } = await this.fetchTradeHistorySnapshot(
-        connection.bitunixApiKey,
-        connection.bitunixApiSecret,
-        retryPendingPositions,
-        { startDate: effectiveHistoryStartDate, endDate }
-      );
-
-      finalPendingPositions = this.mergePendingPositions(finalPendingPositions, retryPendingPositions);
-      finalHistoryTrades = this.mergeHistoryTrades(finalHistoryTrades, retryHistoryTrades);
-    } catch (error) {
-      console.warn('[BITUNIX] Retry fetch for open positions failed:', error.message);
-    }
 
     const trades = this.parsePositions(
       historyPositions,
-      finalPendingPositions,
+      pendingPositions,
       pendingOrders,
       pendingTpSlOrders,
       marginCoin,
-      finalHistoryTrades,
-      historyOrders,
-      historyTpSlOrders
+      historyTrades
     );
 
     if (syncLogId) {

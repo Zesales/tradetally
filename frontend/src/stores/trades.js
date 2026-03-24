@@ -18,7 +18,6 @@ export const useTradesStore = defineStore('trades', () => {
   const filters = ref({
     symbol: '',
     symbolExact: false,
-    positionsOnly: false,
     startDate: '',
     endDate: '',
     tags: [],
@@ -111,11 +110,6 @@ export const useTradesStore = defineStore('trades', () => {
 
       // Fetch count and analytics in parallel (non-blocking, happens after trades are shown)
       // These can fail silently without affecting the main UI
-      const shouldFetchAnalytics = !filters.value.positionsOnly && !params.positionsOnly
-      if (!shouldFetchAnalytics) {
-        analytics.value = null
-      }
-
       Promise.all([
         // Fetch count if it wasn't included
         skipCount && tradesResponse.data.total === null
@@ -133,19 +127,17 @@ export const useTradesStore = defineStore('trades', () => {
             })
           : Promise.resolve(),
         // Fetch analytics (non-blocking)
-        shouldFetchAnalytics
-          ? api.get('/trades/analytics', {
-              params: {
-                ...filters.value,
-                ...params
-              }
-            }).then(response => {
-              analytics.value = response.data
-            }).catch(err => {
-              console.warn('Failed to fetch analytics:', err)
-              // Analytics failure shouldn't block the UI
-            })
-          : Promise.resolve()
+        api.get('/trades/analytics', {
+          params: {
+            ...filters.value,
+            ...params
+          }
+        }).then(response => {
+          analytics.value = response.data
+        }).catch(err => {
+          console.warn('Failed to fetch analytics:', err)
+          // Analytics failure shouldn't block the UI
+        })
       ]).catch(() => {
         // Ignore errors - these are non-critical background requests
       })
@@ -153,44 +145,6 @@ export const useTradesStore = defineStore('trades', () => {
       return tradesResponse.data
     } catch (err) {
       error.value = err.response?.data?.error || 'Failed to fetch trades'
-      throw err
-    } finally {
-      loading.value = false
-    }
-  }
-
-  async function fetchPositions(params = {}) {
-    loading.value = true
-    error.value = null
-
-    try {
-      const offset = (pagination.value.page - 1) * pagination.value.limit
-
-      const response = await requestManager.request('fetchPositions', (cancelToken) =>
-        api.get('/trades/positions', {
-          params: {
-            ...filters.value,
-            ...params,
-            limit: pagination.value.limit,
-            offset
-          },
-          cancelToken
-        })
-      )
-
-      if (!response) {
-        loading.value = false
-        return
-      }
-
-      trades.value = Array.isArray(response.data?.positions) ? response.data.positions : []
-      pagination.value.total = response.data?.total || 0
-      pagination.value.totalPages = Math.ceil((response.data?.total || 0) / pagination.value.limit)
-      analytics.value = null
-
-      return response.data
-    } catch (err) {
-      error.value = err.response?.data?.error || 'Failed to fetch positions'
       throw err
     } finally {
       loading.value = false
@@ -427,7 +381,6 @@ export const useTradesStore = defineStore('trades', () => {
       filters.value = {
         symbol: '',
         symbolExact: false,
-        positionsOnly: false,
         startDate: '',
         endDate: '',
         tags: [],
@@ -450,7 +403,6 @@ export const useTradesStore = defineStore('trades', () => {
       const replacedFilters = {
         symbol: '',
         symbolExact: false,
-        positionsOnly: false,
         startDate: '',
         endDate: '',
         tags: [],
@@ -533,7 +485,6 @@ export const useTradesStore = defineStore('trades', () => {
     winRate,
     totalTrades,
     fetchTrades,
-    fetchPositions,
     fetchRoundTripTrades,
     fetchAnalytics,
     fetchTrade,

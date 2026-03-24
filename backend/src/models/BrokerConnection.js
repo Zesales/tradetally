@@ -116,18 +116,9 @@ class BrokerConnection {
    */
   static async findByUserId(userId) {
     const query = `
-      SELECT bc.*,
-             COALESCE(trade_counts.synced_trade_count, 0) AS synced_trade_count
-      FROM broker_connections bc
-      LEFT JOIN (
-        SELECT broker_connection_id, COUNT(*)::integer AS synced_trade_count
-        FROM trades
-        WHERE user_id = $1
-          AND broker_connection_id IS NOT NULL
-        GROUP BY broker_connection_id
-      ) trade_counts ON trade_counts.broker_connection_id = bc.id
+      SELECT * FROM broker_connections
       WHERE user_id = $1
-      ORDER BY bc.created_at DESC
+      ORDER BY created_at DESC
     `;
 
     const result = await db.query(query, [userId]);
@@ -206,11 +197,9 @@ class BrokerConnection {
           last_error_at = CURRENT_TIMESTAMP,
           last_error_message = $2,
           consecutive_failures = consecutive_failures + 1,
-          -- A sync failure should not hard-lock manual retries. Keep the
-          -- connection usable unless a credential test explicitly marks it bad.
           connection_status = CASE
-            WHEN connection_status IN ('revoked', 'expired') THEN connection_status
-            ELSE 'active'
+            WHEN consecutive_failures >= 2 THEN 'error'
+            ELSE connection_status
           END,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
@@ -392,7 +381,6 @@ class BrokerConnection {
       lastSyncMessage: row.last_sync_message,
       lastSyncTradesImported: row.last_sync_trades_imported,
       lastSyncTradesSkipped: row.last_sync_trades_skipped,
-      syncedTradeCount: parseInt(row.synced_trade_count, 10) || 0,
       nextScheduledSync: row.next_scheduled_sync,
       consecutiveFailures: row.consecutive_failures,
       lastErrorAt: row.last_error_at,
