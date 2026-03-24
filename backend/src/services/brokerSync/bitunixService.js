@@ -18,6 +18,8 @@ const {
   DEFAULT_MARGIN_COIN,
   FUNDING_HISTORY_START_DATE
 } = require('./bitunix/constants');
+const OPEN_POSITION_RETRY_DELAY_MS = 2500;
+const OPEN_POSITION_HISTORY_LOOKBACK_DAYS = 365;
 
 function invalidateInMemoryCache(userId) {
   const cacheKeys = Object.keys(cache.data || {}).filter(key =>
@@ -30,6 +32,141 @@ class BitunixService {
   constructor() {
     this.apiClient = new BitunixApiClient();
     this.tradeParser = new BitunixTradeParser();
+  }
+
+  toDateOnly(value) {
+    if (!value) return null;
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
+      return String(value);
+    }
+
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    return date.toISOString().slice(0, 10);
+  }
+
+  getEarliestPendingPositionDate(pendingPositions = []) {
+    const timestamps = pendingPositions
+      .map(position => Number(position?.ctime))
+      .filter(timestamp => Number.isFinite(timestamp) && timestamp > 0);
+
+    if (!timestamps.length) {
+      return null;
+    }
+
+    return this.toDateOnly(Math.min(...timestamps));
+  }
+
+  resolveHistoryTradeWindow({ startDate, endDate, pendingPositions = [] } = {}) {
+    const earliestPendingDate = this.getEarliestPendingPositionDate(pendingPositions);
+    const normalizedStartDate = this.toDateOnly(startDate);
+    const normalizedEndDate = this.toDateOnly(endDate);
+
+    if (!earliestPendingDate) {
+      return {
+        startDate: normalizedStartDate,
+        endDate: normalizedEndDate
+      };
+    }
+
+    const effectiveStartDate = !normalizedStartDate || earliestPendingDate < normalizedStartDate
+      ? earliestPendingDate
+      : normalizedStartDate;
+
+    return {
+      startDate: effectiveStartDate,
+      endDate: normalizedEndDate
+    };
+  }
+
+  deriveHistoryStartDateFromTimestamp(timestamp, fallbackStartDate = null) {
+    if (fallbackStartDate) {
+      return fallbackStartDate;
+    }
+
+    const normalizedTimestamp = Number(timestamp);
+    if (!Number.isFinite(normalizedTimestamp) || normalizedTimestamp <= 0) {
+      return null;
+    }
+
+    const lookbackStart = normalizedTimestamp - (OPEN_POSITION_HISTORY_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
+    const floorStart = new Date(FUNDING_HISTORY_START_DATE).getTime();
+    return new Date(Math.max(lookbackStart, floorStart)).toISOString().slice(0, 10);
+  }
+
+  deriveHistoryStartDateForPendingPosition(position, fallbackStartDate = null) {
+    return this.deriveHistoryStartDateFromTimestamp(position?.ctime, fallbackStartDate);
+  }
+
+  getUniquePendingPositionTargets(pendingPositions = []) {
+    return Array.from(new Map(
+      (pendingPositions || [])
+        .filter(position => position?.positionId && position?.symbol)
+        .map(position => [String(position.positionId), position])
+    ).values());
+  }
+
+  async getPendingPositionHistoryTrades(apiKey, apiSecret, pendingPositions = [], { startDate, endDate } = {}) {
+    const targets = this.getUniquePendingPositionTargets(pendingPositions);
+    if (!targets.length) {
+      return [];
+    }
+
+    const allTrades = [];
+    for (const position of targets) {
+      const positionStartDate = this.deriveHistoryStartDateForPendingPosition(position, startDate);
+      const positionId = String(position.positionId);
+      const positionTrades = await this.apiClient.getHistoryTrades(apiKey, apiSecret, {
+        startDate: positionStartDate,
+        endDate,
+        symbol: this.tradeParser.normalizeSymbol(position.symbol),
+        positionId
+      });
+      allTrades.push(...positionTrades.map(fill => ({
+        ...fill,
+        positionId: fill?.positionId ? String(fill.positionId) : positionId,
+        symbol: fill?.symbol || this.tradeParser.normalizeSymbol(position.symbol)
+      })));
+    }
+
+    return this.tradeParser.mergeHistoryTrades(allTrades, []);
+  }
+
+  async fetchTradeHistorySnapshot(apiKey, apiSecret, pendingPositions = [], { startDate, endDate } = {}) {
+    const effectiveHistoryStartDate = this.resolveHistoryTradeWindow({
+      startDate,
+      endDate,
+      pendingPositions
+    }).startDate;
+
+    const [historyTrades, pendingPositionHistoryTrades] = await Promise.all([
+      this.apiClient.getHistoryTrades(apiKey, apiSecret, {
+        startDate: effectiveHistoryStartDate,
+        endDate
+      }),
+      this.getPendingPositionHistoryTrades(apiKey, apiSecret, pendingPositions, {
+        startDate,
+        endDate
+      })
+    ]);
+
+    return {
+      effectiveHistoryStartDate,
+      historyTrades: this.tradeParser.mergeHistoryTrades(historyTrades, pendingPositionHistoryTrades)
+    };
+  }
+
+  async safeOptionalFetch(label, fetcher) {
+    try {
+      return await fetcher();
+    } catch (error) {
+      console.warn(`[BITUNIX] Optional ${label} fetch failed:`, error.message);
+      return [];
+    }
   }
 
   async validateCredentials(apiKey, apiSecret, marginCoin = DEFAULT_MARGIN_COIN) {
@@ -484,21 +621,68 @@ class BitunixService {
       await BrokerConnection.updateSyncLog(syncLogId, 'fetching');
     }
 
-    const [historyPositions, pendingPositions, pendingOrders, pendingTpSlOrders, historyTrades] = await Promise.all([
+    const pendingPositions = await this.apiClient.getPendingPositions(
+      connection.bitunixApiKey,
+      connection.bitunixApiSecret
+    );
+
+    const [
+      { effectiveHistoryStartDate, historyTrades },
+      historyPositions,
+      pendingOrders,
+      pendingTpSlOrders,
+      historyOrders,
+      historyTpSlOrders
+    ] = await Promise.all([
+      this.fetchTradeHistorySnapshot(
+        connection.bitunixApiKey,
+        connection.bitunixApiSecret,
+        pendingPositions,
+        { startDate, endDate }
+      ),
       this.apiClient.getHistoryPositions(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate }),
-      this.apiClient.getPendingPositions(connection.bitunixApiKey, connection.bitunixApiSecret),
       this.apiClient.getPendingOrders(connection.bitunixApiKey, connection.bitunixApiSecret),
       this.apiClient.getPendingTpSlOrders(connection.bitunixApiKey, connection.bitunixApiSecret),
-      this.apiClient.getHistoryTrades(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate })
+      this.safeOptionalFetch('history orders', () =>
+        this.apiClient.getHistoryOrders(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate })
+      ),
+      this.safeOptionalFetch('history TP/SL orders', () =>
+        this.apiClient.getHistoryTpSlOrders(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate })
+      )
     ]);
+
+    let finalPendingPositions = pendingPositions;
+    let finalHistoryTrades = historyTrades;
+
+    await new Promise(resolve => setTimeout(resolve, OPEN_POSITION_RETRY_DELAY_MS));
+
+    try {
+      const retryPendingPositions = await this.apiClient.getPendingPositions(
+        connection.bitunixApiKey,
+        connection.bitunixApiSecret
+      );
+      const { historyTrades: retryHistoryTrades } = await this.fetchTradeHistorySnapshot(
+        connection.bitunixApiKey,
+        connection.bitunixApiSecret,
+        retryPendingPositions,
+        { startDate: effectiveHistoryStartDate, endDate }
+      );
+
+      finalPendingPositions = this.tradeParser.mergePendingPositions(finalPendingPositions, retryPendingPositions);
+      finalHistoryTrades = this.tradeParser.mergeHistoryTrades(finalHistoryTrades, retryHistoryTrades);
+    } catch (error) {
+      console.warn('[BITUNIX] Retry fetch for open positions failed:', error.message);
+    }
 
     const trades = this.tradeParser.parsePositions(
       historyPositions,
-      pendingPositions,
+      finalPendingPositions,
       pendingOrders,
       pendingTpSlOrders,
       marginCoin,
-      historyTrades
+      finalHistoryTrades,
+      historyOrders,
+      historyTpSlOrders
     );
 
     if (syncLogId) {

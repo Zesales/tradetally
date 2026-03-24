@@ -706,6 +706,15 @@ const brokerSyncController = {
       );
 
       const deletedCount = result.rowCount;
+      await db.query(
+        `UPDATE broker_connections
+         SET last_sync_trades_imported = 0,
+             last_sync_trades_skipped = 0,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1
+           AND user_id = $2`,
+        [id, userId]
+      );
       console.log(`[BROKER-SYNC] Deleted ${deletedCount} synced trades for connection ${id} (user ${userId})`);
 
       // Invalidate both database and in-memory analytics cache after deleting trades

@@ -8,6 +8,28 @@ const {
 } = require('./constants');
 
 class BitunixApiClient {
+  toBitunixTimestamp(value, { endOfDay = false } = {}) {
+    if (!value) {
+      return null;
+    }
+
+    if (value instanceof Date) {
+      return value.getTime();
+    }
+
+    const normalizedValue = String(value).trim();
+    if (!normalizedValue) {
+      return null;
+    }
+
+    const hasExplicitTime = normalizedValue.includes('T') || /\d{2}:\d{2}/.test(normalizedValue);
+    const dateValue = hasExplicitTime
+      ? new Date(normalizedValue)
+      : new Date(`${normalizedValue}T${endOfDay ? '23:59:59.999' : '00:00:00.000'}Z`);
+
+    return Number.isNaN(dateValue.getTime()) ? null : dateValue.getTime();
+  }
+
   generateNonce() {
     return crypto.randomBytes(16).toString('hex');
   }
@@ -179,8 +201,115 @@ class BitunixApiClient {
     return orders;
   }
 
-  async getHistoryTrades(apiKey, apiSecret, { startDate, endDate } = {}) {
+  async getHistoryTrades(apiKey, apiSecret, { startDate, endDate, symbol, positionId } = {}) {
     const trades = [];
+    const seen = new Set();
+    const startTime = this.toBitunixTimestamp(startDate);
+    let cursorEndTime = this.toBitunixTimestamp(endDate, { endOfDay: true }) || Date.now();
+    let previousOldestTime = null;
+
+    for (let windowIndex = 0; windowIndex < 50; windowIndex++) {
+      let skip = 0;
+      let total = Infinity;
+      let windowCount = 0;
+      let oldestFillTime = null;
+
+      while (skip < total) {
+        const query = {
+          skip,
+          limit: PAGE_SIZE
+        };
+
+        if (startTime) {
+          query.startTime = startTime;
+        }
+        if (cursorEndTime) {
+          query.endTime = cursorEndTime;
+        }
+        if (symbol) {
+          query.symbol = symbol;
+        }
+        if (positionId) {
+          query.positionId = positionId;
+        }
+
+        const result = await this.request({
+          apiKey,
+          apiSecret,
+          path: '/api/v1/futures/trade/get_history_trades',
+          query
+        });
+
+        const data = result.data;
+        const page = Array.isArray(data)
+          ? data
+          : (data?.tradeList || data?.orderList || data?.list || []);
+
+        if (!page.length) {
+          total = 0;
+          break;
+        }
+
+        total = Number(data?.total || page.length);
+        windowCount += page.length;
+
+        page.forEach(fill => {
+          const key = [
+            fill?.positionId || '',
+            fill?.tradeId || '',
+            fill?.orderId || '',
+            fill?.ctime || fill?.mtime || '',
+            fill?.price || '',
+            fill?.qty || ''
+          ].join(':');
+
+          if (!seen.has(key)) {
+            seen.add(key);
+            trades.push(fill);
+          }
+
+          const fillTime = Number(fill?.ctime || fill?.mtime);
+          if (Number.isFinite(fillTime)) {
+            oldestFillTime = oldestFillTime === null ? fillTime : Math.min(oldestFillTime, fillTime);
+          }
+        });
+
+        if (page.length < PAGE_SIZE) {
+          break;
+        }
+
+        skip += page.length;
+
+        if (!Number.isFinite(total) || total <= PAGE_SIZE) {
+          break;
+        }
+      }
+
+      if (oldestFillTime === null) {
+        break;
+      }
+
+      if (startTime !== null && oldestFillTime <= startTime) {
+        break;
+      }
+
+      if (windowCount < PAGE_SIZE) {
+        break;
+      }
+
+      if (previousOldestTime !== null && oldestFillTime >= previousOldestTime) {
+        break;
+      }
+
+      previousOldestTime = oldestFillTime;
+      cursorEndTime = oldestFillTime - 1;
+    }
+
+    return trades;
+  }
+
+  async getHistoryOrders(apiKey, apiSecret, { startDate, endDate } = {}) {
+    const orders = [];
     let skip = 0;
     let total = Infinity;
 
@@ -190,26 +319,25 @@ class BitunixApiClient {
         limit: PAGE_SIZE
       };
 
-      if (startDate) {
-        query.startTime = new Date(`${startDate}T00:00:00.000Z`).getTime();
+      const startTime = this.toBitunixTimestamp(startDate);
+      const endTime = this.toBitunixTimestamp(endDate, { endOfDay: true });
+      if (startTime) {
+        query.startTime = startTime;
       }
-      if (endDate) {
-        query.endTime = new Date(`${endDate}T23:59:59.999Z`).getTime();
+      if (endTime) {
+        query.endTime = endTime;
       }
 
       const result = await this.request({
         apiKey,
         apiSecret,
-        path: '/api/v1/futures/trade/get_history_trades',
+        path: '/api/v1/futures/trade/get_history_orders',
         query
       });
 
-      const data = result.data;
-      const page = Array.isArray(data)
-        ? data
-        : (data?.tradeList || data?.orderList || data?.list || []);
-      total = Number(data?.total || page.length);
-      trades.push(...page);
+      const page = result.data?.orderList || [];
+      total = Number(result.data?.total || page.length);
+      orders.push(...page);
 
       if (page.length < PAGE_SIZE) {
         break;
@@ -218,7 +346,48 @@ class BitunixApiClient {
       skip += page.length;
     }
 
-    return trades;
+    return orders;
+  }
+
+  async getHistoryTpSlOrders(apiKey, apiSecret, { startDate, endDate } = {}) {
+    const orders = [];
+    let skip = 0;
+    let total = Infinity;
+
+    while (skip < total) {
+      const query = {
+        skip,
+        limit: PAGE_SIZE
+      };
+
+      const startTime = this.toBitunixTimestamp(startDate);
+      const endTime = this.toBitunixTimestamp(endDate, { endOfDay: true });
+      if (startTime) {
+        query.startTime = startTime;
+      }
+      if (endTime) {
+        query.endTime = endTime;
+      }
+
+      const result = await this.request({
+        apiKey,
+        apiSecret,
+        path: '/api/v1/futures/tpsl/get_history_orders',
+        query
+      });
+
+      const page = result.data?.orderList || [];
+      total = Number(result.data?.total || page.length);
+      orders.push(...page);
+
+      if (page.length < PAGE_SIZE) {
+        break;
+      }
+
+      skip += page.length;
+    }
+
+    return orders;
   }
 
   async getDepositRecords(apiKey, apiSecret, { coin, startTime, endTime, limit = 100 } = {}) {

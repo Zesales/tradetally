@@ -196,6 +196,34 @@ class BitunixTradeParser {
       }, {});
   }
 
+  buildHistoryOrdersIndex(historyOrders = []) {
+    return historyOrders
+      .map(order => this.parsePendingOrder(order))
+      .filter(Boolean)
+      .reduce((acc, order) => {
+        const key = order.symbol;
+        if (!acc[key]) {
+          acc[key] = [];
+        }
+        acc[key].push(order);
+        return acc;
+      }, {});
+  }
+
+  buildHistoryTpSlIndex(historyTpSlOrders = []) {
+    return historyTpSlOrders
+      .map(order => this.parsePendingTpSlOrder(order))
+      .filter(Boolean)
+      .reduce((acc, order) => {
+        const key = order.positionId;
+        if (!acc[key]) {
+          acc[key] = [];
+        }
+        acc[key].push(order);
+        return acc;
+      }, {});
+  }
+
   getRelevantPendingOrders(position, pendingOrdersIndex = {}) {
     const symbol = this.normalizeSymbol(position.symbol);
     const side = this.normalizePositionSide(position.side);
@@ -214,6 +242,33 @@ class BitunixTradeParser {
         ...order,
         intent: order.reduceOnly ? 'reduce' : 'scale_in'
       }));
+  }
+
+  getRelevantHistoricalOrders(position, historyOrdersIndex = {}) {
+    const symbol = this.normalizeSymbol(position?.symbol);
+    const side = this.normalizePositionSide(position?.side);
+    const expectedActions = this.orderIntentByPositionSide[side] || this.orderIntentByPositionSide.long;
+    const orders = historyOrdersIndex[symbol] || [];
+    const entryTime = Number(position?.ctime);
+    const exitTime = Number(position?.mtime || position?.utime || position?.ctime);
+    const tolerance = 60 * 1000;
+
+    return orders.filter(order => {
+      if (!order?.side) {
+        return false;
+      }
+
+      const orderTime = new Date(order.createdAt || order.updatedAt || 0).getTime();
+      if (Number.isFinite(entryTime) && Number.isFinite(orderTime) && orderTime < entryTime - tolerance) {
+        return false;
+      }
+      if (Number.isFinite(exitTime) && Number.isFinite(orderTime) && orderTime > exitTime + tolerance) {
+        return false;
+      }
+
+      return order.side.toUpperCase() === expectedActions.scale_in
+        || order.side.toUpperCase() === expectedActions.reduce;
+    });
   }
 
   buildPositionTargets(positionTpSlOrders = [], relevantPendingOrders = []) {
@@ -468,7 +523,7 @@ class BitunixTradeParser {
     ];
   }
 
-  parseClosedPosition(position, marginCoin, historyTradeIndex = {}) {
+  parseClosedPosition(position, marginCoin, historyTradeIndex = {}, historyOrdersIndex = {}, historyTpSlIndex = {}) {
     const side = this.normalizePositionSide(position.side);
     const quantity = Math.abs(parseFloat(position.maxQty || 0));
     const entryTime = this.toIsoString(position.ctime);
@@ -490,6 +545,10 @@ class BitunixTradeParser {
     const pnlPercent = marginUsed && marginUsed > 0 && netPnl !== null
       ? (netPnl / marginUsed) * 100
       : null;
+    const positionId = String(position.positionId);
+    const relevantHistoryOrders = this.getRelevantHistoricalOrders(position, historyOrdersIndex);
+    const positionTpSlOrders = historyTpSlIndex[positionId] || [];
+    const { stopLoss, takeProfit, takeProfitTargets } = this.buildPositionTargets(positionTpSlOrders, relevantHistoryOrders);
 
     if (!position.positionId || !position.symbol || !quantity || !entryTime) {
       return null;
@@ -549,9 +608,9 @@ class BitunixTradeParser {
       instrumentType: 'crypto',
       originalCurrency,
       accountIdentifier: `bitunix-${marginCoin.toLowerCase()}`,
-      stopLoss: null,
-      takeProfit: null,
-      takeProfitTargets: [],
+      stopLoss,
+      takeProfit,
+      takeProfitTargets,
       executionData: this.buildClosedPositionExecutions(position, fallbackExecutions, historyTradeIndex)
     };
   }
@@ -760,16 +819,153 @@ class BitunixTradeParser {
     };
   }
 
-  parsePositions(historyPositions, pendingPositions, pendingOrders, pendingTpSlOrders, marginCoin, historyTrades = []) {
+  buildInferredPendingPositions(historyTrades = [], historyPositions = [], pendingPositions = []) {
+    const knownPositionIds = new Set(
+      [...historyPositions, ...pendingPositions]
+        .map(position => position?.positionId)
+        .filter(Boolean)
+        .map(String)
+    );
+
+    const groupedFills = historyTrades.reduce((acc, fill) => {
+      if (!fill?.positionId || !fill?.symbol) {
+        return acc;
+      }
+
+      const positionId = String(fill.positionId);
+      if (knownPositionIds.has(positionId)) {
+        return acc;
+      }
+
+      if (!acc[positionId]) {
+        acc[positionId] = [];
+      }
+      acc[positionId].push(fill);
+      return acc;
+    }, {});
+
+    return Object.entries(groupedFills).map(([positionId, fills]) => {
+      const sortedFills = [...fills].sort((a, b) => Number(a.ctime || a.mtime) - Number(b.ctime || b.mtime));
+      const side = this.normalizePositionSide(sortedFills[0]?.side);
+      const parsedFills = sortedFills
+        .map(fill => this.parseHistoryTradeFill(fill, side, {
+          leverage: this.parseNumber(fill?.leverage),
+          marginMode: fill?.marginMode || null,
+          positionMode: fill?.positionMode || null,
+          liquidationPrice: this.parseNumber(fill?.liqPrice)
+        }, positionId))
+        .filter(Boolean);
+
+      if (!parsedFills.length) {
+        return null;
+      }
+
+      const totals = parsedFills.reduce((acc, fill) => {
+        const qty = Math.abs(this.parseNumber(fill?.quantity) || 0);
+        if (fill.type === 'entry') {
+          acc.entryQty += qty;
+          acc.entryNotional += qty * (this.parseNumber(fill?.price) || 0);
+        } else if (fill.type === 'exit') {
+          acc.exitQty += qty;
+        }
+        return acc;
+      }, { entryQty: 0, exitQty: 0, entryNotional: 0 });
+
+      const netQuantity = totals.entryQty - totals.exitQty;
+      if (!(netQuantity > 1e-8)) {
+        return null;
+      }
+
+      const firstFill = sortedFills[0];
+      const lastFill = sortedFills[sortedFills.length - 1];
+      const averageOpenPrice = totals.entryQty > 0
+        ? totals.entryNotional / totals.entryQty
+        : this.parseNumber(firstFill?.price);
+
+      return {
+        positionId,
+        symbol: firstFill?.symbol,
+        side,
+        qty: netQuantity,
+        maxQty: totals.entryQty,
+        ctime: firstFill?.ctime || firstFill?.mtime,
+        mtime: lastFill?.mtime || lastFill?.ctime,
+        utime: lastFill?.mtime || lastFill?.ctime,
+        avgOpenPrice: averageOpenPrice,
+        entryValue: averageOpenPrice !== null ? averageOpenPrice * netQuantity : null,
+        leverage: this.parseNumber(firstFill?.leverage),
+        margin: null,
+        marginMode: firstFill?.marginMode || null,
+        positionMode: firstFill?.positionMode || null,
+        liqPrice: this.parseNumber(firstFill?.liqPrice),
+        fee: parsedFills.reduce((sum, fill) => sum + Math.abs(this.parseNumber(fill?.fee) || 0), 0),
+        funding: 0,
+        realizedPNL: parsedFills.reduce((sum, fill) => sum + (this.parseNumber(fill?.realizedPnl) || 0), 0),
+        unrealizedPNL: null
+      };
+    }).filter(Boolean);
+  }
+
+  mergePendingPositions(primary = [], secondary = []) {
+    const merged = new Map();
+
+    [...primary, ...secondary].forEach(position => {
+      if (!position?.positionId) {
+        return;
+      }
+
+      merged.set(String(position.positionId), position);
+    });
+
+    return Array.from(merged.values());
+  }
+
+  mergeHistoryTrades(primary = [], secondary = []) {
+    const merged = new Map();
+
+    [...primary, ...secondary].forEach(fill => {
+      if (!fill) {
+        return;
+      }
+
+      const key = [
+        fill.positionId || '',
+        fill.tradeId || '',
+        fill.orderId || '',
+        fill.ctime || fill.mtime || '',
+        fill.price || '',
+        fill.qty || ''
+      ].join(':');
+
+      merged.set(key, fill);
+    });
+
+    return Array.from(merged.values());
+  }
+
+  parsePositions(
+    historyPositions,
+    pendingPositions,
+    pendingOrders,
+    pendingTpSlOrders,
+    marginCoin,
+    historyTrades = [],
+    historyOrders = [],
+    historyTpSlOrders = []
+  ) {
     const pendingOrdersIndex = this.buildPendingOrdersIndex(pendingOrders);
     const pendingTpSlIndex = this.buildPendingTpSlIndex(pendingTpSlOrders);
+    const historyOrdersIndex = this.buildHistoryOrdersIndex(historyOrders);
+    const historyTpSlIndex = this.buildHistoryTpSlIndex(historyTpSlOrders);
     const historyTradeIndex = this.buildHistoryTradesIndex(historyTrades, historyPositions, pendingPositions);
+    const inferredPendingPositions = this.buildInferredPendingPositions(historyTrades, historyPositions, pendingPositions);
+    const allPendingPositions = [...pendingPositions, ...inferredPendingPositions];
 
     const closedTrades = historyPositions
-      .map(position => this.parseClosedPosition(position, marginCoin, historyTradeIndex))
+      .map(position => this.parseClosedPosition(position, marginCoin, historyTradeIndex, historyOrdersIndex, historyTpSlIndex))
       .filter(Boolean);
 
-    const openTrades = pendingPositions
+    const openTrades = allPendingPositions
       .map(position => this.parsePendingPosition(position, marginCoin, pendingOrdersIndex, pendingTpSlIndex, historyTradeIndex))
       .filter(Boolean);
 

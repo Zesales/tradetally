@@ -33,6 +33,7 @@ const Trade = require('../../src/models/Trade');
 const db = require('../../src/config/database');
 const ibkrService = require('../../src/services/brokerSync/ibkrService');
 const schwabService = require('../../src/services/brokerSync/schwabService');
+const bitunixService = require('../../src/services/brokerSync/bitunixService');
 
 describe('broker sync duplicate protection', () => {
   beforeEach(() => {
@@ -226,5 +227,70 @@ describe('broker sync duplicate protection', () => {
     expect(query).toContain('trade_date <= $3');
     expect(query).not.toContain('LIMIT 5000');
     expect(params).toEqual(['user-1', '2026-03-05', '2026-03-08']);
+  });
+
+  test('Bitunix sync extends history trade lookup to cover older open position entries', async () => {
+    const connection = {
+      id: 'conn-1',
+      userId: 'user-1',
+      bitunixApiKey: 'api-key',
+      bitunixApiSecret: 'api-secret',
+      bitunixMarginCoin: 'USDT'
+    };
+
+    jest.spyOn(bitunixService.apiClient, 'getHistoryPositions').mockResolvedValueOnce([]);
+    const pendingPosition = {
+      positionId: 'position-1',
+      symbol: 'XRPUSDT',
+      side: 'LONG',
+      qty: '40.9',
+      avgOpenPrice: '1.9224',
+      ctime: new Date('2025-11-16T21:00:14.000Z').getTime()
+    };
+    jest.spyOn(bitunixService.apiClient, 'getPendingPositions')
+      .mockResolvedValueOnce([pendingPosition])
+      .mockResolvedValueOnce([pendingPosition]);
+    jest.spyOn(bitunixService.apiClient, 'getPendingOrders').mockResolvedValueOnce([]);
+    jest.spyOn(bitunixService.apiClient, 'getPendingTpSlOrders').mockResolvedValueOnce([]);
+    jest.spyOn(bitunixService.apiClient, 'getHistoryOrders').mockResolvedValueOnce([]);
+    jest.spyOn(bitunixService.apiClient, 'getHistoryTpSlOrders').mockResolvedValueOnce([]);
+    const getHistoryTradesSpy = jest
+      .spyOn(bitunixService.apiClient, 'getHistoryTrades')
+      .mockResolvedValue([]);
+    jest.spyOn(bitunixService, 'importTrades').mockResolvedValueOnce({
+      imported: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      duplicates: 0
+    });
+
+    await bitunixService.syncTrades(connection, {
+      startDate: '2026-03-20',
+      endDate: '2026-03-24'
+    });
+
+    expect(getHistoryTradesSpy.mock.calls).toEqual(
+      expect.arrayContaining([
+        [
+          'api-key',
+          'api-secret',
+          {
+            startDate: '2025-11-16',
+            endDate: '2026-03-24'
+          }
+        ],
+        [
+          'api-key',
+          'api-secret',
+          {
+            startDate: '2026-03-20',
+            endDate: '2026-03-24',
+            symbol: 'XRPUSDT',
+            positionId: 'position-1'
+          }
+        ]
+      ])
+    );
   });
 });
