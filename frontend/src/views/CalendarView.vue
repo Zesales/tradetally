@@ -122,9 +122,9 @@
               </div>
             </div>
 
-            <!-- Calendar Grid - Weekdays Only -->
-            <div class="grid grid-cols-6 gap-1 mb-2">
-              <div v-for="day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri']" :key="day"
+            <!-- Calendar Grid -->
+            <div class="grid grid-cols-8 gap-1 mb-2">
+              <div v-for="day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']" :key="day"
                 class="text-center text-xs font-medium text-gray-500 dark:text-gray-400 py-2">
                 {{ day }}
               </div>
@@ -132,7 +132,7 @@
                 {{ showRValue ? 'Week R' : 'Week P/L' }}
               </div>
             </div>
-            <div v-for="(week, weekIndex) in expandedMonthWeekdays" :key="weekIndex" class="grid grid-cols-6 gap-1 mb-1">
+            <div v-for="(week, weekIndex) in expandedMonthWeeks" :key="weekIndex" class="grid grid-cols-8 gap-1 mb-1">
               <div v-for="(day, dayIndex) in week.days" :key="dayIndex"
                 class="border border-gray-200 dark:border-gray-700 rounded-lg p-2 sm:p-3 min-h-[70px] sm:min-h-[80px] cursor-pointer hover:brightness-95 transition-all"
                 :class="getDayClass(day)"
@@ -178,7 +178,7 @@
 
             <!-- Mini Calendar -->
             <div class="grid grid-cols-7 gap-0.5 text-xs">
-              <div v-for="day in ['S', 'M', 'T', 'W', 'T', 'F', 'S']" :key="day"
+              <div v-for="day in ['M', 'T', 'W', 'T', 'F', 'S', 'S']" :key="day"
                 class="text-center text-gray-400 dark:text-gray-500 pb-1">
                 {{ day }}
               </div>
@@ -385,89 +385,29 @@ const expandedMonthWeeks = computed(() => {
   
   for (let i = 0; i < days.length; i += 7) {
     const weekDays = days.slice(i, i + 7)
+    while (weekDays.length < 7) {
+      weekDays.push({ date: null })
+    }
     const weekPnl = weekDays.reduce((sum, day) => {
       if (day.pnl !== undefined) {
         return sum + day.pnl
       }
       return sum
     }, 0)
+    const weekRValue = weekDays.reduce((sum, day) => {
+      if (day.rValue !== undefined) {
+        return sum + (day.rValue || 0)
+      }
+      return sum
+    }, 0)
     
     weeks.push({
       days: weekDays,
-      weekPnl
+      weekPnl,
+      weekRValue
     })
   }
   
-  return weeks
-})
-
-const expandedMonthWeekdays = computed(() => {
-  if (!expandedMonth.value) return []
-  const monthStart = startOfMonth(expandedMonth.value)
-  const monthEnd = endOfMonth(expandedMonth.value)
-  const allDays = eachDayOfInterval({ start: monthStart, end: monthEnd })
-
-  const weeks = []
-  let currentWeek = { days: [], weekPnl: 0, weekRValue: 0 }
-
-  for (const date of allDays) {
-    const dayOfWeek = getDay(date) // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-
-    // Skip weekends
-    if (dayOfWeek === 0 || dayOfWeek === 6) {
-      // If we hit Sunday and have accumulated weekdays, finish the week
-      if (dayOfWeek === 0 && currentWeek.days.length > 0) {
-        // Pad to 5 days if needed (for partial weeks)
-        while (currentWeek.days.length < 5) {
-          currentWeek.days.push({ date: null })
-        }
-        weeks.push(currentWeek)
-        currentWeek = { days: [], weekPnl: 0, weekRValue: 0 }
-      }
-      continue
-    }
-
-    // If it's Monday and we already have days, start a new week
-    if (dayOfWeek === 1 && currentWeek.days.length > 0) {
-      // Pad to 5 days if needed (for partial weeks)
-      while (currentWeek.days.length < 5) {
-        currentWeek.days.push({ date: null })
-      }
-      weeks.push(currentWeek)
-      currentWeek = { days: [], weekPnl: 0, weekRValue: 0 }
-    }
-
-    // Add padding for the first week if it doesn't start on Monday
-    if (weeks.length === 0 && currentWeek.days.length === 0 && dayOfWeek > 1) {
-      for (let i = 1; i < dayOfWeek; i++) {
-        currentWeek.days.push({ date: null })
-      }
-    }
-
-    // Get calendar data using optimized lookup
-    const dayData = getCalendarDataForDate(date)
-
-    currentWeek.days.push({
-      date,
-      trades: dayData.trades,
-      pnl: dayData.trades > 0 ? dayData.pnl : undefined,
-      rValue: dayData.trades > 0 ? dayData.rValue : undefined
-    })
-
-    if (dayData.trades > 0) {
-      currentWeek.weekPnl += dayData.pnl
-      currentWeek.weekRValue += dayData.rValue || 0
-    }
-  }
-
-  // Add any remaining days as the last week
-  if (currentWeek.days.length > 0) {
-    while (currentWeek.days.length < 5) {
-      currentWeek.days.push({ date: null })
-    }
-    weeks.push(currentWeek)
-  }
-
   return weeks
 })
 
@@ -573,7 +513,7 @@ const selectedDayTotal = computed(() => {
 
 function generateMonthDays(monthStart, monthEnd) {
   const days = []
-  const startPadding = getDay(monthStart)
+  const startPadding = (getDay(monthStart) + 6) % 7
 
   // Add padding for days before month starts
   for (let i = 0; i < startPadding; i++) {

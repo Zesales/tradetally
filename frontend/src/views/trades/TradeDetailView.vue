@@ -735,7 +735,7 @@
           </div>
 
           <!-- Trade Chart Visualization (Collapsible) -->
-          <div v-if="trade.exit_price && trade.exit_time" class="card">
+          <div v-if="trade.entry_time || trade.trade_date" class="card">
             <div class="card-body">
               <button
                 @click="toggleChartSection"
@@ -756,7 +756,7 @@
                 <TradeChartVisualization
                   :key="chartVisualizationKey"
                   :trade-id="trade.id"
-                  :auto-load="chartAutoLoadRequested"
+                  :auto-load="!chartSectionCollapsed"
                 />
               </div>
             </div>
@@ -2235,6 +2235,11 @@ async function loadTrade() {
     chartImageFailed.value = false // Reset chart image state for new trade
     chartAutoLoadRequested.value = false
     trade.value = await tradesStore.fetchTrade(route.params.id)
+
+    if (trade.value?.entry_time || trade.value?.trade_date) {
+      chartSectionCollapsed.value = false
+      localStorage.setItem('tradeDetail_chartCollapsed', 'false')
+    }
     
     // Load comments after trade is loaded
     if (trade.value) {

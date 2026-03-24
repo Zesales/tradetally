@@ -122,21 +122,21 @@
             </dd>
           </div>
           <div>
-            <dt class="text-gray-500 dark:text-gray-400">Exit</dt>
+            <dt class="text-gray-500 dark:text-gray-400">{{ chartExitLabel }}</dt>
             <dd class="font-medium text-gray-900 dark:text-white">
-              ${{ formatNumber(chartData.trade.exitPrice) }}
+              ${{ formatNumber(chartExitValue) }}
             </dd>
           </div>
           <div>
             <dt class="text-gray-500 dark:text-gray-400">P&L</dt>
-            <dd class="font-medium" :class="chartData.trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'">
-              {{ chartData.trade.pnl >= 0 ? '+' : '' }}${{ formatNumber(Math.abs(chartData.trade.pnl)) }}
+            <dd class="font-medium" :class="chartPnlValue >= 0 ? 'text-green-600' : 'text-red-600'">
+              {{ chartPnlValue >= 0 ? '+' : '' }}${{ formatNumber(Math.abs(chartPnlValue)) }}
             </dd>
           </div>
           <div>
-            <dt class="text-gray-500 dark:text-gray-400">Return</dt>
-            <dd class="font-medium" :class="chartData.trade.pnlPercent >= 0 ? 'text-green-600' : 'text-red-600'">
-              {{ chartData.trade.pnlPercent >= 0 ? '+' : '' }}{{ formatNumber(chartData.trade.pnlPercent) }}%
+            <dt class="text-gray-500 dark:text-gray-400">{{ chartReturnLabel }}</dt>
+            <dd class="font-medium" :class="chartPnlPercentValue >= 0 ? 'text-green-600' : 'text-red-600'">
+              {{ chartPnlPercentValue >= 0 ? '+' : '' }}{{ formatNumber(chartPnlPercentValue) }}%
             </dd>
           </div>
         </div>
@@ -180,6 +180,53 @@ let candleSeries = null
 const userTier = computed(() => authStore.user?.tier?.tier_name || 'free')
 const isBillingEnabled = computed(() => authStore.user?.billingEnabled !== false)
 const requiresProUpgrade = computed(() => isBillingEnabled.value && userTier.value !== 'pro')
+const isOpenTrade = computed(() => !chartData.value?.trade?.exitTime)
+const latestCandleClose = computed(() => {
+  const candles = chartData.value?.candles
+  if (!Array.isArray(candles) || candles.length === 0) return null
+  return Number(candles[candles.length - 1]?.close) || null
+})
+const chartExitLabel = computed(() => isOpenTrade.value ? 'Current' : 'Exit')
+const chartReturnLabel = computed(() => isOpenTrade.value ? 'Change' : 'Return')
+const chartExitValue = computed(() => {
+  const exitPrice = Number(chartData.value?.trade?.exitPrice)
+  if (!Number.isNaN(exitPrice) && exitPrice > 0) return exitPrice
+  return latestCandleClose.value || 0
+})
+const chartPnlValue = computed(() => {
+  const explicitPnl = Number(chartData.value?.trade?.pnl)
+  if (!Number.isNaN(explicitPnl)) return explicitPnl
+
+  const trade = chartData.value?.trade
+  const currentPrice = latestCandleClose.value
+  const entryPrice = Number(trade?.entryPrice)
+  const quantity = Number(trade?.quantity)
+  const multiplier = Number(trade?.contractSize) || 1
+
+  if (!trade || !currentPrice || Number.isNaN(entryPrice) || Number.isNaN(quantity)) return 0
+
+  const priceDiff = trade.side === 'short'
+    ? entryPrice - currentPrice
+    : currentPrice - entryPrice
+
+  return priceDiff * quantity * multiplier
+})
+const chartPnlPercentValue = computed(() => {
+  const explicitPercent = Number(chartData.value?.trade?.pnlPercent)
+  if (!Number.isNaN(explicitPercent)) return explicitPercent
+
+  const trade = chartData.value?.trade
+  const currentPrice = latestCandleClose.value
+  const entryPrice = Number(trade?.entryPrice)
+
+  if (!trade || !currentPrice || Number.isNaN(entryPrice) || entryPrice === 0) return 0
+
+  const priceDiff = trade.side === 'short'
+    ? entryPrice - currentPrice
+    : currentPrice - entryPrice
+
+  return (priceDiff / entryPrice) * 100
+})
 
 // Helper methods for source display
 const getSourceLabel = (source) => {
@@ -676,6 +723,16 @@ const createTradeChart = () => {
         })
       }
 
+      if (entryMarker && !exitTimestamp) {
+        console.log('[STOCK] Open trade detected, setting entry marker only')
+        try {
+          candleSeries.setMarkers([entryMarker])
+          console.log('[STOCK] ✓ Successfully set open-trade entry marker')
+        } catch (markerError) {
+          console.error('[STOCK] ✗ Error setting open-trade entry marker:', markerError)
+        }
+      }
+
       // Add exit execution marker if trade has exit
       if (exitTimestamp && exitInRange) {
         // Find the closest candle to exit time
@@ -900,6 +957,12 @@ watch(() => document.documentElement.classList.contains('dark'), () => {
 
 onMounted(() => {
   if (props.autoLoad) {
+    loadChart()
+  }
+})
+
+watch(() => props.autoLoad, (shouldAutoLoad) => {
+  if (shouldAutoLoad && !showChart.value && !loading.value && !chartData.value) {
     loadChart()
   }
 })
