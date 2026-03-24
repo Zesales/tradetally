@@ -296,6 +296,99 @@ class BitunixService {
     return orders;
   }
 
+  async getHistoryOrders(apiKey, apiSecret, { startDate, endDate } = {}) {
+    const orders = [];
+    let skip = 0;
+    let total = Infinity;
+
+    while (skip < total) {
+      const query = {
+        skip,
+        limit: PAGE_SIZE
+      };
+
+      const startTime = this.toBitunixTimestamp(startDate);
+      const endTime = this.toBitunixTimestamp(endDate, { endOfDay: true });
+      if (startTime) {
+        query.startTime = startTime;
+      }
+      if (endTime) {
+        query.endTime = endTime;
+      }
+
+      const result = await this.request({
+        apiKey,
+        apiSecret,
+        path: '/api/v1/futures/trade/get_history_orders',
+        query
+      });
+
+      const page = result.data?.orderList || [];
+      total = Number(result.data?.total || page.length);
+      orders.push(...page);
+
+      if (page.length < PAGE_SIZE) {
+        break;
+      }
+
+      skip += page.length;
+    }
+
+    return orders;
+  }
+
+  async getHistoryTpSlOrders(apiKey, apiSecret, { startDate, endDate } = {}) {
+    const orders = [];
+    let skip = 0;
+    let total = Infinity;
+
+    while (skip < total) {
+      const query = {
+        skip,
+        limit: PAGE_SIZE
+      };
+
+      const startTime = this.toBitunixTimestamp(startDate);
+      const endTime = this.toBitunixTimestamp(endDate, { endOfDay: true });
+      if (startTime) {
+        query.startTime = startTime;
+      }
+      if (endTime) {
+        query.endTime = endTime;
+      }
+
+      const result = await this.request({
+        apiKey,
+        apiSecret,
+        path: '/api/v1/futures/tpsl/get_history_orders',
+        query
+      });
+
+      const page = result.data?.orderList || [];
+      total = Number(result.data?.total || page.length);
+      orders.push(...page);
+
+      if (page.length < PAGE_SIZE) {
+        break;
+      }
+
+      skip += page.length;
+    }
+
+    return orders;
+  }
+
+  async safeOptionalFetch(label, fetcher) {
+    try {
+      return await fetcher();
+    } catch (error) {
+      // Bitunix does not expose every history endpoint consistently for every key/account.
+      // Missing optional order history must not break the entire trade sync.
+      console.warn(`[BITUNIX] Optional ${label} fetch failed:`, error.message);
+      return [];
+    }
+  }
+
   async getHistoryTrades(apiKey, apiSecret, { startDate, endDate, symbol, positionId } = {}) {
     const trades = [];
     const seen = new Set();
@@ -806,12 +899,13 @@ class BitunixService {
   }
 
   parsePendingTpSlOrder(order) {
-    if (!order?.id || !order?.positionId || !order?.symbol) {
+    const orderId = order?.id || order?.orderId;
+    if (!orderId || !order?.positionId || !order?.symbol) {
       return null;
     }
 
     return {
-      id: String(order.id),
+      id: String(orderId),
       positionId: String(order.positionId),
       symbol: this.normalizeSymbol(order.symbol),
       tpPrice: this.parseNumber(order.tpPrice),
@@ -824,6 +918,8 @@ class BitunixService {
       slOrderType: order.slOrderType || null,
       slOrderPrice: this.parseNumber(order.slOrderPrice),
       slQty: this.parseNumber(order.slQty),
+      createdAt: this.toIsoString(order.ctime),
+      triggerTime: this.toIsoString(order.triggerTime),
       source: 'position_tpsl'
     };
   }
@@ -844,6 +940,34 @@ class BitunixService {
 
   buildPendingTpSlIndex(pendingTpSlOrders) {
     return pendingTpSlOrders
+      .map(order => this.parsePendingTpSlOrder(order))
+      .filter(Boolean)
+      .reduce((acc, order) => {
+        const key = order.positionId;
+        if (!acc[key]) {
+          acc[key] = [];
+        }
+        acc[key].push(order);
+        return acc;
+      }, {});
+  }
+
+  buildHistoryOrdersIndex(historyOrders) {
+    return historyOrders
+      .map(order => this.parsePendingOrder(order))
+      .filter(Boolean)
+      .reduce((acc, order) => {
+        const key = order.symbol;
+        if (!acc[key]) {
+          acc[key] = [];
+        }
+        acc[key].push(order);
+        return acc;
+      }, {});
+  }
+
+  buildHistoryTpSlIndex(historyTpSlOrders) {
+    return historyTpSlOrders
       .map(order => this.parsePendingTpSlOrder(order))
       .filter(Boolean)
       .reduce((acc, order) => {
@@ -931,6 +1055,33 @@ class BitunixService {
       takeProfit,
       takeProfitTargets: dedupedTakeProfitTargets
     };
+  }
+
+  getRelevantHistoricalOrders(position, historyOrdersIndex) {
+    const symbol = this.normalizeSymbol(position?.symbol);
+    const side = this.normalizePositionSide(position?.side);
+    const expectedActions = this.orderIntentByPositionSide[side] || this.orderIntentByPositionSide.long;
+    const orders = historyOrdersIndex[symbol] || [];
+    const entryTime = Number(position?.ctime);
+    const exitTime = Number(position?.mtime || position?.utime || position?.ctime);
+    const tolerance = 60 * 1000;
+
+    return orders.filter(order => {
+      if (!order?.side) {
+        return false;
+      }
+
+      const orderTime = new Date(order.createdAt || order.updatedAt || 0).getTime();
+      if (Number.isFinite(entryTime) && Number.isFinite(orderTime) && orderTime < entryTime - tolerance) {
+        return false;
+      }
+      if (Number.isFinite(exitTime) && Number.isFinite(orderTime) && orderTime > exitTime + tolerance) {
+        return false;
+      }
+
+      return order.side.toUpperCase() === expectedActions.scale_in
+        || order.side.toUpperCase() === expectedActions.reduce;
+    });
   }
 
   calculatePositionPnl(entryPrice, exitPrice, quantity, side) {
@@ -1122,7 +1273,7 @@ class BitunixService {
     ];
   }
 
-  parseClosedPosition(position, marginCoin, historyTradeIndex = {}) {
+  parseClosedPosition(position, marginCoin, historyTradeIndex = {}, historyOrdersIndex = {}, historyTpSlIndex = {}) {
     const side = this.normalizePositionSide(position.side);
     const quantity = Math.abs(parseFloat(position.maxQty || 0));
     const entryTime = this.toIsoString(position.ctime);
@@ -1144,6 +1295,10 @@ class BitunixService {
     const pnlPercent = marginUsed && marginUsed > 0 && netPnl !== null
       ? (netPnl / marginUsed) * 100
       : null;
+    const positionId = String(position.positionId);
+    const relevantHistoryOrders = this.getRelevantHistoricalOrders(position, historyOrdersIndex);
+    const positionTpSlOrders = historyTpSlIndex[positionId] || [];
+    const { stopLoss, takeProfit, takeProfitTargets } = this.buildPositionTargets(positionTpSlOrders, relevantHistoryOrders);
 
     if (!position.positionId || !position.symbol || !quantity || !entryTime) {
       return null;
@@ -1157,7 +1312,7 @@ class BitunixService {
         price: entryPrice,
         quantity,
         side,
-        positionId: String(position.positionId),
+        positionId,
         leverage,
         notionalValue,
         marginUsed,
@@ -1174,7 +1329,7 @@ class BitunixService {
         price: exitPrice,
         quantity,
         side,
-        positionId: String(position.positionId),
+        positionId,
         leverage,
         notionalValue,
         marginUsed,
@@ -1203,9 +1358,9 @@ class BitunixService {
       instrumentType: 'crypto',
       originalCurrency,
       accountIdentifier: `bitunix-${marginCoin.toLowerCase()}`,
-      stopLoss: null,
-      takeProfit: null,
-      takeProfitTargets: [],
+      stopLoss,
+      takeProfit,
+      takeProfitTargets,
       executionData: this.buildClosedPositionExecutions(position, fallbackExecutions, historyTradeIndex)
     };
   }
@@ -1374,15 +1529,26 @@ class BitunixService {
     };
   }
 
-  parsePositions(historyPositions, pendingPositions, pendingOrders, pendingTpSlOrders, marginCoin, historyTrades = []) {
+  parsePositions(
+    historyPositions,
+    pendingPositions,
+    pendingOrders,
+    pendingTpSlOrders,
+    marginCoin,
+    historyTrades = [],
+    historyOrders = [],
+    historyTpSlOrders = []
+  ) {
     const pendingOrdersIndex = this.buildPendingOrdersIndex(pendingOrders);
     const pendingTpSlIndex = this.buildPendingTpSlIndex(pendingTpSlOrders);
+    const historyOrdersIndex = this.buildHistoryOrdersIndex(historyOrders);
+    const historyTpSlIndex = this.buildHistoryTpSlIndex(historyTpSlOrders);
     const historyTradeIndex = this.buildHistoryTradesIndex(historyTrades, historyPositions, pendingPositions);
     const inferredPendingPositions = this.buildInferredPendingPositions(historyTrades, historyPositions, pendingPositions);
     const allPendingPositions = [...pendingPositions, ...inferredPendingPositions];
 
     const closedTrades = historyPositions
-      .map(position => this.parseClosedPosition(position, marginCoin, historyTradeIndex))
+      .map(position => this.parseClosedPosition(position, marginCoin, historyTradeIndex, historyOrdersIndex, historyTpSlIndex))
       .filter(Boolean);
 
     const openTrades = allPendingPositions
@@ -1658,6 +1824,32 @@ class BitunixService {
     }) || null;
   }
 
+  findTradeByCoreFields(newTrade, existingTrades) {
+    return existingTrades.find(existing => {
+      if (String(existing.symbol || '').toUpperCase() !== String(newTrade.symbol || '').toUpperCase()) {
+        return false;
+      }
+
+      if (
+        newTrade.accountIdentifier &&
+        existing.account_identifier &&
+        newTrade.accountIdentifier !== existing.account_identifier
+      ) {
+        return false;
+      }
+
+      const existingTradeDate = existing.trade_date?.toISOString?.().split('T')[0]
+        || String(existing.trade_date || '').split('T')[0];
+      const sameTradeDate = existingTradeDate === newTrade.tradeDate;
+      const sameSide = existing.side === newTrade.side;
+      const sameQty = Math.abs((parseFloat(existing.quantity) || 0) - (parseFloat(newTrade.quantity) || 0)) < 0.000001;
+      const sameEntry = Math.abs((parseFloat(existing.entry_price) || 0) - (parseFloat(newTrade.entryPrice) || 0)) < 0.000001;
+      const sameExit = Math.abs((parseFloat(existing.exit_price) || 0) - (parseFloat(newTrade.exitPrice) || 0)) < 0.000001;
+
+      return sameTradeDate && sameSide && sameQty && sameEntry && sameExit;
+    }) || null;
+  }
+
   hasTradeChanged(existingTrade, newTrade) {
     const existingStopLoss = this.parseNumber(existingTrade.stop_loss);
     const existingTakeProfit = this.parseNumber(existingTrade.take_profit);
@@ -1773,7 +1965,8 @@ class BitunixService {
 
     for (const tradeData of trades) {
       try {
-        const matchingTrade = this.findTradeByPositionId(tradeData, existingTrades);
+        const matchingTrade = this.findTradeByPositionId(tradeData, existingTrades)
+          || this.findTradeByCoreFields(tradeData, existingTrades);
         if (matchingTrade) {
           if (this.hasTradeChanged(matchingTrade, tradeData)) {
             await this.updateExistingTrade(userId, connectionId, matchingTrade.id, tradeData);
@@ -1863,7 +2056,7 @@ class BitunixService {
     });
 
     const pendingPositions = await this.getPendingPositions(connection.bitunixApiKey, connection.bitunixApiSecret);
-    const [{ effectiveHistoryStartDate, historyTrades }, historyPositions, pendingOrders, pendingTpSlOrders] = await Promise.all([
+    const [{ effectiveHistoryStartDate, historyTrades }, historyPositions, pendingOrders, pendingTpSlOrders, historyOrders, historyTpSlOrders] = await Promise.all([
       this.fetchTradeHistorySnapshot(
         connection.bitunixApiKey,
         connection.bitunixApiSecret,
@@ -1872,7 +2065,13 @@ class BitunixService {
       ),
       this.getHistoryPositions(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate }),
       this.getPendingOrders(connection.bitunixApiKey, connection.bitunixApiSecret),
-      this.getPendingTpSlOrders(connection.bitunixApiKey, connection.bitunixApiSecret)
+      this.getPendingTpSlOrders(connection.bitunixApiKey, connection.bitunixApiSecret),
+      this.safeOptionalFetch('history orders', () =>
+        this.getHistoryOrders(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate })
+      ),
+      this.safeOptionalFetch('history TP/SL orders', () =>
+        this.getHistoryTpSlOrders(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate })
+      )
     ]);
 
     let finalPendingPositions = pendingPositions;
@@ -1901,7 +2100,9 @@ class BitunixService {
       pendingOrders,
       pendingTpSlOrders,
       marginCoin,
-      finalHistoryTrades
+      finalHistoryTrades,
+      historyOrders,
+      historyTpSlOrders
     );
 
     if (syncLogId) {

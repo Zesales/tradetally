@@ -151,7 +151,14 @@
           <!-- Data Status -->
           <div class="flex items-center space-x-2">
             <span
-              v-if="!trade.can_analyze"
+              v-if="trade.stop_loss_unavailable_from_broker"
+              class="text-xs px-2 py-1 bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300 rounded"
+              title="Bitunix did not return historical stop loss data for this trade"
+            >
+              SL Unavailable
+            </span>
+            <span
+              v-else-if="!trade.can_analyze"
               class="text-xs px-2 py-1 bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400 rounded"
               title="Stop loss required for analysis"
             >

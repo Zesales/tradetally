@@ -6,6 +6,7 @@
 const db = require('../config/database');
 const finnhub = require('../utils/finnhub');
 const OpenPositionHoldingAdapterService = require('./openPositions/openPositionHoldingAdapter.service');
+const OpenPositionIdentityService = require('./openPositions/openPositionIdentity.service');
 
 class HoldingsService {
   /**
@@ -71,16 +72,17 @@ class HoldingsService {
   static async getHolding(userId, holdingId, options = {}) {
     const { refreshPrices = false } = options;
 
-    if (String(holdingId).startsWith('trade-')) {
-      const symbol = String(holdingId).slice('trade-'.length).toUpperCase();
-      const holdings = refreshPrices
-        ? await this.refreshPrices(userId)
-        : await this.getHoldings(userId);
+    if (OpenPositionIdentityService.isTradePositionId(holdingId)) {
+      const holding = await OpenPositionHoldingAdapterService.getTradeBasedHolding(userId, holdingId);
+      if (!holding) {
+        return null;
+      }
 
-      return holdings.find(holding =>
-        String(holding.id) === String(holdingId)
-        || (holding.source === 'trades' && holding.symbol === symbol)
-      ) || null;
+      if (refreshPrices) {
+        await this.refreshTradeBasedHoldingPrice(holding);
+      }
+
+      return holding;
     }
 
     if (refreshPrices) {
@@ -292,7 +294,7 @@ class HoldingsService {
    * @returns {Promise<Array>} Array of lots
    */
   static async getLots(userId, holdingId) {
-    if (String(holdingId).startsWith('trade-')) {
+    if (OpenPositionIdentityService.isTradePositionId(holdingId)) {
       return [];
     }
 
@@ -351,7 +353,7 @@ class HoldingsService {
    * @returns {Promise<Object>} Created dividend
    */
   static async recordDividend(userId, holdingId, data) {
-    if (String(holdingId).startsWith('trade-')) {
+    if (OpenPositionIdentityService.isTradePositionId(holdingId)) {
       throw new Error('Dividends are not supported for trade-based positions');
     }
 
@@ -411,7 +413,7 @@ class HoldingsService {
    * @returns {Promise<Array>} Array of dividends
    */
   static async getDividendHistory(userId, holdingId) {
-    if (String(holdingId).startsWith('trade-')) {
+    if (OpenPositionIdentityService.isTradePositionId(holdingId)) {
       return [];
     }
 
@@ -501,7 +503,7 @@ class HoldingsService {
       const cached = cachedPrices[holding.symbol];
       if (cached) {
         this._applyPriceToHolding(holding, cached);
-        if (holding.source !== 'trades' && !String(holding.id).startsWith('trade-')) {
+        if (holding.source !== 'trades' && !OpenPositionIdentityService.isTradePositionId(holding.id)) {
           await this.refreshHoldingPrice(userId, holding.id);
         }
       } else {
@@ -527,7 +529,7 @@ class HoldingsService {
                 : await finnhub.getQuote(holding.symbol);
               if (quote && quote.c) {
                 this._applyPriceToHolding(holding, quote.c);
-                if (holding.source !== 'trades' && !String(holding.id).startsWith('trade-')) {
+                if (holding.source !== 'trades' && !OpenPositionIdentityService.isTradePositionId(holding.id)) {
                   await this.refreshHoldingPrice(userId, holding.id);
                 }
               }
@@ -553,7 +555,9 @@ class HoldingsService {
       valueMultiplier = holding.contractSize || 100;
     }
     const currentValue = holding.totalShares * currentPrice * valueMultiplier;
-    const unrealizedPnl = currentValue - holding.totalCostBasis;
+    const unrealizedPnl = holding.side === 'short'
+      ? holding.totalCostBasis - currentValue
+      : currentValue - holding.totalCostBasis;
     const unrealizedPnlPercent = holding.totalCostBasis > 0
       ? (unrealizedPnl / holding.totalCostBasis) * 100
       : 0;
@@ -571,7 +575,7 @@ class HoldingsService {
    * @param {string} holdingId - Holding ID
    */
   static async refreshHoldingPrice(userId, holdingId) {
-    if (String(holdingId).startsWith('trade-')) {
+    if (OpenPositionIdentityService.isTradePositionId(holdingId)) {
       return;
     }
 
@@ -698,6 +702,7 @@ class HoldingsService {
       totalShares: parseFloat(row.total_shares) || 0,
       averageCostBasis: parseFloat(row.average_cost_basis) || null,
       totalCostBasis: parseFloat(row.total_cost_basis) || 0,
+      side: row.side || 'long',
       currentPrice: parseFloat(row.current_price) || null,
       currentValue: parseFloat(row.current_value) || null,
       unrealizedPnl: parseFloat(row.unrealized_pnl) || null,
@@ -714,6 +719,28 @@ class HoldingsService {
       updatedAt: row.updated_at,
       source: row.source || 'investment' // 'investment' or 'trades'
     };
+  }
+
+  static async refreshTradeBasedHoldingPrice(holding) {
+    if (!holding || holding.source !== 'trades') {
+      return holding;
+    }
+
+    try {
+      const quote = finnhub.isCryptoSymbol(holding.symbol)
+        ? await finnhub.getCryptoQuote(holding.symbol)
+        : await finnhub.getQuote(holding.symbol);
+
+      if (!quote || !quote.c) {
+        return holding;
+      }
+
+      this._applyPriceToHolding(holding, quote.c);
+    } catch (error) {
+      console.error(`[HOLDINGS] Error refreshing trade-based holding price for ${holding.symbol}: ${error.message}`);
+    }
+
+    return holding;
   }
 
   /**

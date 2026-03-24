@@ -287,6 +287,7 @@ import config from '@/config'
 import NavDropdown from '@/components/common/NavDropdown.vue'
 import NotificationBell from '@/components/common/NotificationBell.vue'
 import GlobalAccountSelector from '@/components/layout/GlobalAccountSelector.vue'
+import { buildPositionsListRoute } from '@/utils/positionsView'
 
 const authStore = useAuthStore()
 const { showSEOPages } = useRegistrationMode()
@@ -337,7 +338,11 @@ const baseNavigation = [
       }
     ]
   },
-  { name: 'Trades', to: '/trades', route: 'trades' },
+  {
+    name: 'Trades',
+    to: buildPositionsListRoute(),
+    route: 'trades'
+  },
   {
     name: 'Metrics',
     type: 'dropdown',

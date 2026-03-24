@@ -33,6 +33,7 @@ const Trade = require('../../src/models/Trade');
 const db = require('../../src/config/database');
 const ibkrService = require('../../src/services/brokerSync/ibkrService');
 const schwabService = require('../../src/services/brokerSync/schwabService');
+const bitunixService = require('../../src/services/brokerSync/bitunixService');
 
 describe('broker sync duplicate protection', () => {
   beforeEach(() => {
@@ -226,5 +227,73 @@ describe('broker sync duplicate protection', () => {
     expect(query).toContain('trade_date <= $3');
     expect(query).not.toContain('LIMIT 5000');
     expect(params).toEqual(['user-1', '2026-03-05', '2026-03-08']);
+  });
+
+  test('Bitunix import updates an existing duplicate trade when stop loss data arrives later', async () => {
+    db.query
+      .mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'trade-1',
+            symbol: 'BTCUSDT',
+            side: 'short',
+            quantity: '0.003',
+            entry_price: '71441',
+            exit_price: '70571.8',
+            entry_time: '2026-03-23T15:07:50.000Z',
+            exit_time: '2026-03-23T17:33:41.000Z',
+            trade_date: '2026-03-23',
+            pnl: '2.52',
+            account_identifier: 'bitunix-usdt',
+            stop_loss: null,
+            take_profit: null,
+            take_profit_targets: [],
+            executions: []
+          }
+        ]
+      })
+      .mockResolvedValueOnce({ rows: [] });
+
+    const result = await bitunixService.importTrades('user-1', 'conn-1', [
+      {
+        symbol: 'BTCUSDT',
+        side: 'short',
+        quantity: 0.003,
+        entryPrice: 71441,
+        exitPrice: 70571.8,
+        entryTime: '2026-03-23T15:07:50.000Z',
+        exitTime: '2026-03-23T17:33:41.000Z',
+        tradeDate: '2026-03-23',
+        pnl: 2.52,
+        pnlPercent: 23.5,
+        broker: 'bitunix',
+        instrumentType: 'crypto',
+        accountIdentifier: 'bitunix-usdt',
+        stopLoss: 71880,
+        takeProfit: null,
+        takeProfitTargets: [],
+        executionData: [
+          {
+            type: 'entry',
+            action: 'sell',
+            quantity: 0.003,
+            price: 71441,
+            datetime: '2026-03-23T15:07:50.000Z',
+            side: 'short',
+            positionId: 'position-legacy-backfill'
+          }
+        ]
+      }
+    ]);
+
+    expect(result).toMatchObject({
+      imported: 0,
+      updated: 1,
+      duplicates: 0,
+      failed: 0
+    });
+    expect(db.query).toHaveBeenCalledTimes(2);
+    expect(db.query.mock.calls[1][0]).toContain('UPDATE trades');
+    expect(db.query.mock.calls[1][1][10]).toBe(71880);
   });
 });

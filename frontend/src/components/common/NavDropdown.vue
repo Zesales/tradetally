@@ -81,7 +81,7 @@
               @click="closeDropdown"
               class="group flex items-center px-4 py-3 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors"
               :class="{
-                'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white': $route.name === item.route
+                'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white': isItemActive(item)
               }"
             >
               <div class="flex-1">
@@ -130,8 +130,20 @@ const hoverTimeout = ref(null)
 
 // Check if any dropdown item is currently active
 const isActive = computed(() => {
-  return props.items.some(item => route.name === item.route)
+  return props.items.some(item => isItemActive(item))
 })
+
+const isItemActive = (item) => {
+  if (route.name !== item.route) {
+    return false
+  }
+
+  if (item.query) {
+    return Object.entries(item.query).every(([key, value]) => String(route.query?.[key] ?? '') === String(value))
+  }
+
+  return true
+}
 
 // Check if we're on mobile (no hover support)
 const isMobile = ref(false)

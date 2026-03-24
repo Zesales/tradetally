@@ -1,8 +1,7 @@
-const BitunixOpenPositionAdapter = require('./adapters/bitunixOpenPositionAdapter');
-
-const BROKER_ADAPTERS = {
-  bitunix: BitunixOpenPositionAdapter
-};
+const OpenPositionBrokerAdapterRegistry = require('./adapters');
+const OpenPositionIdentityService = require('./openPositionIdentity.service');
+const OpenPositionReferenceService = require('./openPositionReference.service');
+const OpenPositionTradeTransformerService = require('./openPositionTradeTransformer.service');
 
 class OpenPositionAggregationService {
   static normalizeExpirationDate(value) {
@@ -12,23 +11,7 @@ class OpenPositionAggregationService {
   }
 
   static parseTradeExecutions(trades = []) {
-    trades.forEach(trade => {
-      if (!trade.executions) {
-        trade.executions = [];
-        return;
-      }
-
-      try {
-        trade.executions = typeof trade.executions === 'string'
-          ? JSON.parse(trade.executions)
-          : trade.executions;
-      } catch (error) {
-        console.warn(`Failed to parse executions for trade ${trade.id}:`, error.message);
-        trade.executions = [];
-      }
-    });
-
-    return trades;
+    return OpenPositionTradeTransformerService.parseTradeExecutions(trades);
   }
 
   static buildPositions(trades = []) {
@@ -156,6 +139,11 @@ class OpenPositionAggregationService {
   }
 
   static getPositionKey(trade) {
+    const positionReferenceKey = OpenPositionReferenceService.buildTradePositionGroupKey(trade);
+    if (positionReferenceKey) {
+      return positionReferenceKey;
+    }
+
     if (
       trade.instrument_type === 'option'
       && trade.underlying_symbol
@@ -175,7 +163,7 @@ class OpenPositionAggregationService {
   }
 
   static getBrokerAdapter(broker) {
-    return BROKER_ADAPTERS[String(broker || '').toLowerCase()] || null;
+    return OpenPositionBrokerAdapterRegistry.getAdapter(broker);
   }
 
   static mergeFallbackOptionPositions(positionMap) {
@@ -238,6 +226,8 @@ class OpenPositionAggregationService {
       position.marginCost = position.totalCost;
       position.totalCost = priceBasis;
       position.avgPrice = priceBasis / (absoluteQuantity * avgPriceMultiplier);
+      position.id = OpenPositionIdentityService.buildPositionId(position);
+      position.legacyId = OpenPositionIdentityService.buildLegacyPositionId(position.symbol);
 
       positions.push(position);
     });

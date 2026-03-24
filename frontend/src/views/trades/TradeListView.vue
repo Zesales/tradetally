@@ -2,9 +2,9 @@
   <div :class="[isFullWidth ? 'max-w-full px-4 sm:px-6 lg:px-12 mx-auto' : 'content-wrapper', 'py-8 transition-all duration-300']">
     <!-- Title -->
     <div class="mb-6">
-      <h1 class="heading-page">Trades</h1>
+      <h1 class="heading-page">{{ pageTitle }}</h1>
       <p class="mt-2 text-sm text-gray-700 dark:text-gray-300">
-        A list of all your trades including their details and performance.
+        {{ pageDescription }}
       </p>
     </div>
     
@@ -27,9 +27,34 @@
     <!-- Enrichment Status -->
     <EnrichmentStatus />
 
-    <div class="mt-8 card">
+    <div class="mt-8 flex items-center gap-4 border-b border-gray-200 dark:border-gray-700">
+      <button
+        @click="setTradeViewMode('positions')"
+        :class="[
+          'pb-3 text-sm font-medium border-b-2 transition-colors',
+          isPositionsMode
+            ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+            : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+        ]"
+      >
+        Positions
+      </button>
+      <button
+        @click="setTradeViewMode('trades')"
+        :class="[
+          'pb-3 text-sm font-medium border-b-2 transition-colors',
+          !isPositionsMode
+            ? 'border-primary-500 text-primary-600 dark:text-primary-400'
+            : 'border-transparent text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-300'
+        ]"
+      >
+        Trades
+      </button>
+    </div>
+
+    <div class="mt-6 card">
       <div class="card-body">
-        <TradeFilters @filter="handleFilter" />
+        <TradeFilters :key="tradeFiltersKey" @filter="handleFilter" />
       </div>
     </div>
 
@@ -42,7 +67,7 @@
           <div class="flex items-start justify-between">
             <div class="flex-1">
               <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-2">
-                Total P&L ({{ tradesStore.totalTrades }} {{ tradesStore.totalTrades === 1 ? 'trade' : 'trades' }})
+                Total P&L ({{ tradesStore.totalTrades }} {{ tradesStore.totalTrades === 1 ? summaryEntityLabel : `${summaryEntityLabel}s` }})
               </h3>
               <div class="text-lg font-semibold" :class="[
                 tradesStore.totalPnL >= 0
@@ -67,8 +92,8 @@
             </button>
           </div>
           <div>
-            <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">Win Rate</div>
-            <div class="text-lg font-medium text-gray-900 dark:text-white">{{ tradesStore.winRate }}%</div>
+              <div class="text-sm text-gray-500 dark:text-gray-400 mb-1">Win Rate</div>
+            <div class="text-lg font-medium text-gray-900 dark:text-white">{{ summaryWinRate }}%</div>
           </div>
         </div>
         
@@ -76,7 +101,7 @@
         <div class="hidden sm:flex items-center justify-between">
           <div class="flex items-center space-x-4">
             <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-              Total P&L ({{ tradesStore.totalTrades }} {{ tradesStore.totalTrades === 1 ? 'trade' : 'trades' }})
+              Total P&L ({{ tradesStore.totalTrades }} {{ tradesStore.totalTrades === 1 ? summaryEntityLabel : `${summaryEntityLabel}s` }})
             </h3>
             <div class="text-lg font-semibold" :class="[
               tradesStore.totalPnL >= 0
@@ -89,7 +114,7 @@
           <div class="flex items-center gap-6">
             <div class="text-right">
               <div class="text-sm text-gray-500 dark:text-gray-400">Win Rate</div>
-              <div class="text-lg font-medium text-gray-900 dark:text-white">{{ tradesStore.winRate }}%</div>
+              <div class="text-lg font-medium text-gray-900 dark:text-white">{{ summaryWinRate }}%</div>
             </div>
             <!-- Fullwidth Toggle -->
             <button
@@ -116,11 +141,11 @@
 
       <div v-else-if="tradesStore.trades.length === 0" class="text-center py-12">
         <DocumentTextIcon class="mx-auto h-12 w-12 text-gray-400" />
-        <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-white">No trades</h3>
+        <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-white">{{ isPositionsMode ? 'No positions' : 'No trades' }}</h3>
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-          Get started by creating a new trade.
+          {{ isPositionsMode ? 'No positions match your current filters.' : 'Get started by creating a new trade.' }}
         </p>
-        <div class="mt-6">
+        <div v-if="!isPositionsMode" class="mt-6">
           <router-link to="/trades/new" class="btn-primary">
             Add trade
           </router-link>
@@ -132,10 +157,30 @@
         <!-- Bulk Actions Bar -->
         <div v-if="selectedTrades.length > 0" class="mb-6 p-4 bg-primary-50 dark:bg-primary-900/20 border border-primary-200 dark:border-primary-800 rounded-lg">
           <div class="flex items-center justify-between">
-            <span class="text-sm text-primary-800 dark:text-primary-200">
-              {{ selectedTrades.length }} trade{{ selectedTrades.length === 1 ? '' : 's' }} selected
-            </span>
-            <div class="flex items-center space-x-2">
+            <div class="min-w-0">
+              <span class="text-sm text-primary-800 dark:text-primary-200">
+                {{ selectedTrades.length }} {{ isPositionsMode ? `position${selectedTrades.length === 1 ? '' : 's'}` : `trade${selectedTrades.length === 1 ? '' : 's'}` }} selected
+              </span>
+              <div v-if="isPositionsMode" class="mt-2 space-y-2">
+                <label class="flex items-start gap-2 text-xs text-primary-900 dark:text-primary-100">
+                  <input
+                    v-model="applyPositionActionsToTrades"
+                    type="checkbox"
+                    class="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                  />
+                  <span>
+                    Apply this action to all linked trades inside each selected position
+                    <span v-if="selectedPositionLinkedTradeCount > 0" class="text-primary-700 dark:text-primary-300">
+                      ({{ selectedPositionLinkedTradeCount }} linked trade{{ selectedPositionLinkedTradeCount === 1 ? '' : 's' }})
+                    </span>
+                  </span>
+                </label>
+                <p class="text-xs text-primary-700 dark:text-primary-300">
+                  Positions are aggregated views. Tags and deletes are applied to the linked trades when this option is enabled.
+                </p>
+              </div>
+            </div>
+            <div class="flex items-center space-x-2 flex-shrink-0">
               <button
                 @click="clearSelection"
                 class="text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
@@ -144,13 +189,17 @@
               </button>
               <button
                 @click="showBulkTagModal = true"
+                :disabled="isPositionsMode && !applyPositionActionsToTrades"
                 class="px-3 py-2 text-sm bg-primary-600 text-white rounded-md hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2"
+                :class="{ 'opacity-50 cursor-not-allowed hover:bg-primary-600': isPositionsMode && !applyPositionActionsToTrades }"
               >
                 Add tags
               </button>
               <button
                 @click="confirmBulkDelete"
+                :disabled="isPositionsMode && !applyPositionActionsToTrades"
                 class="px-3 py-2 text-sm bg-red-600 text-white rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+                :class="{ 'opacity-50 cursor-not-allowed hover:bg-red-600': isPositionsMode && !applyPositionActionsToTrades }"
               >
                 Delete selected
               </button>
@@ -175,7 +224,7 @@
               @click.stop
               class="mt-1 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
             />
-            <div class="flex-1 cursor-pointer" @click="$router.push(`/trades/${trade.id}`)">
+            <div class="flex-1 cursor-pointer" @click="navigateToTradeOrPosition(trade)">
             <div class="flex justify-between items-start mb-3">
               <div class="flex items-center space-x-2">
                 <div class="text-lg font-semibold text-gray-900 dark:text-white">
@@ -280,6 +329,7 @@
           
           <div class="flex justify-between items-center mt-3 pt-3 border-t border-gray-200 dark:border-gray-700">
             <button
+              v-if="!isPositionsMode"
               @click.stop="openComments(trade)"
               class="inline-flex items-center text-gray-500 hover:text-primary-600 transition-colors"
             >
@@ -348,7 +398,7 @@
                 <!-- Symbol Column -->
                 <td v-if="column.visible && column.key === 'symbol'"
                     :class="[getSymbolPadding, 'cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div class="flex items-center gap-1.5 flex-wrap max-w-xs">
                     <div class="text-sm font-medium text-gray-900 dark:text-white truncate max-w-[200px]" :title="trade.symbol">
                       {{ trade.symbol }}
@@ -378,7 +428,7 @@
                 <!-- Entry Date Column -->
                 <td v-else-if="column.visible && column.key === 'entryDate'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div v-if="trade.entry_time" class="text-sm text-gray-900 dark:text-white leading-tight">
                     <div>{{ formatDateMonthDay(trade.entry_time) }}</div>
                     <div class="text-xs text-gray-500 dark:text-gray-400">{{ formatDateYear(trade.entry_time) }}</div>
@@ -389,7 +439,7 @@
                 <!-- Exit Date Column -->
                 <td v-else-if="column.visible && column.key === 'exitDate'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div v-if="trade.exit_time" class="text-sm text-gray-900 dark:text-white leading-tight">
                     <div>{{ formatDateMonthDay(trade.exit_time) }}</div>
                     <div class="text-xs text-gray-500 dark:text-gray-400">{{ formatDateYear(trade.exit_time) }}</div>
@@ -400,7 +450,7 @@
                 <!-- Entry Time Column -->
                 <td v-else-if="column.visible && column.key === 'entryTime'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div class="text-sm text-gray-900 dark:text-white">
                     {{ trade.entry_time ? formatTime(trade.entry_time) : '-' }}
                   </div>
@@ -409,7 +459,7 @@
                 <!-- Side Column -->
                 <td v-else-if="column.visible && column.key === 'side'" 
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
                     :class="[
                       trade.side === 'long' 
@@ -423,21 +473,21 @@
                 <!-- Entry Column -->
                 <td v-else-if="column.visible && column.key === 'entry'" 
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   ${{ formatNumber(trade.entry_price) }}
                 </td>
                 
                 <!-- Exit Column -->
                 <td v-else-if="column.visible && column.key === 'exit'" 
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.exit_price ? `$${formatNumber(trade.exit_price)}` : '-' }}
                 </td>
                 
                 <!-- P&L Column -->
                 <td v-else-if="column.visible && column.key === 'pnl'" 
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div class="text-sm font-medium" :class="[
                     trade.pnl >= 0 ? 'text-green-600' : 'text-red-600'
                   ]">
@@ -451,7 +501,7 @@
                 <!-- Confidence Column -->
                 <td v-else-if="column.visible && column.key === 'confidence'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div v-if="trade.confidence" class="flex items-center space-x-2">
                     <div class="flex space-x-1">
                       <div v-for="i in 5" :key="i" class="w-2 h-2 rounded-full"
@@ -466,7 +516,7 @@
                 <!-- Quality Column -->
                 <td v-else-if="column.visible && column.key === 'quality'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer text-center']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <span v-if="trade.qualityGrade"
                     class="px-2 py-1 inline-block text-xs font-semibold rounded"
                     :class="{
@@ -484,7 +534,7 @@
                 <!-- Sector Column -->
                 <td v-else-if="column.visible && column.key === 'sector'" 
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div class="text-sm text-gray-900 dark:text-white">
                     {{ trade.sector || '-' }}
                   </div>
@@ -493,7 +543,7 @@
                 <!-- Status Column -->
                 <td v-else-if="column.visible && column.key === 'status'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
                     :class="[
                       trade.exit_price
@@ -508,54 +558,56 @@
                 <td v-else-if="column.visible && column.key === 'comments'" 
                     :class="[getCellPadding, 'whitespace-nowrap text-center']">
                   <button
+                    v-if="!isPositionsMode"
                     @click.stop="openComments(trade)"
                     class="inline-flex items-center text-gray-500 hover:text-primary-600 transition-colors"
                   >
                     <ChatBubbleLeftIcon class="h-4 w-4 mr-1" />
                     <span class="text-sm">{{ trade.comment_count || 0 }}</span>
                   </button>
+                  <span v-else class="text-sm text-gray-500 dark:text-gray-400">{{ trade.tradeCount || '-' }}</span>
                 </td>
                 
                 <!-- Additional Columns -->
                 <td v-else-if="column.visible && column.key === 'quantity'"
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ formatQuantity(trade.quantity) || '-' }}
                 </td>
                 
                 <td v-else-if="column.visible && column.key === 'commission'" 
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.commission ? `$${formatNumber(trade.commission)}` : '-' }}
                 </td>
                 
                 <td v-else-if="column.visible && column.key === 'fees'" 
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.fees ? `$${formatNumber(trade.fees)}` : '-' }}
                 </td>
                 
                 <td v-else-if="column.visible && column.key === 'strategy'" 
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.strategy || '-' }}
                 </td>
                 
                 <td v-else-if="column.visible && column.key === 'broker'"
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.broker || '-' }}
                 </td>
 
                 <td v-else-if="column.visible && column.key === 'account'"
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ redactAccountId(trade.account_identifier) || '-' }}
                 </td>
 
                 <td v-else-if="column.visible && column.key === 'tags'" 
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div class="flex flex-wrap gap-1">
                     <span v-for="tag in (trade.tags || [])" :key="tag" 
                           class="px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded">
@@ -567,7 +619,7 @@
                 
                 <td v-else-if="column.visible && column.key === 'notes'" 
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div class="truncate max-w-xs" :title="trade.notes">
                     {{ trade.notes || '-' }}
                   </div>
@@ -575,13 +627,13 @@
                 
                 <td v-else-if="column.visible && column.key === 'holdTime'" 
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']" 
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ formatHoldTime(trade) }}
                 </td>
                 
                 <td v-else-if="column.visible && column.key === 'roi'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div class="text-sm font-medium" :class="[
                     (trade.pnl_percent || 0) >= 0 ? 'text-green-600' : 'text-red-600'
                   ]">
@@ -592,7 +644,7 @@
                 <!-- Risk Management Fields -->
                 <td v-else-if="column.visible && column.key === 'stopLoss'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div class="text-sm text-gray-900 dark:text-white font-mono">
                     {{ (trade.stop_loss || trade.stopLoss) ? `$${formatNumber(trade.stop_loss || trade.stopLoss)}` : '-' }}
                   </div>
@@ -600,7 +652,7 @@
 
                 <td v-else-if="column.visible && column.key === 'takeProfit'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div class="text-sm text-gray-900 dark:text-white font-mono">
                     {{ (trade.take_profit || trade.takeProfit) ? `$${formatNumber(trade.take_profit || trade.takeProfit)}` : '-' }}
                   </div>
@@ -608,7 +660,7 @@
 
                 <td v-else-if="column.visible && column.key === 'rValue'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <div v-if="trade.rValue != null && trade.rValue !== undefined" class="text-sm font-medium" :class="[
                     trade.rValue >= 2 ? 'text-green-600 dark:text-green-400' :
                     trade.rValue >= 0 ? 'text-yellow-600 dark:text-yellow-400' :
@@ -622,20 +674,20 @@
                 <!-- Options/Futures Fields -->
                 <td v-else-if="column.visible && column.key === 'instrumentType'"
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <span v-if="trade.instrument_type" class="capitalize">{{ trade.instrument_type }}</span>
                   <span v-else>Stock</span>
                 </td>
 
                 <td v-else-if="column.visible && column.key === 'underlyingSymbol'"
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.underlying_symbol || '-' }}
                 </td>
 
                 <td v-else-if="column.visible && column.key === 'optionType'"
                     :class="[getCellPadding, 'whitespace-nowrap cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   <span v-if="trade.option_type"
                         class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full uppercase"
                         :class="[
@@ -650,31 +702,31 @@
 
                 <td v-else-if="column.visible && column.key === 'strikePrice'"
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.strike_price ? `$${formatNumber(trade.strike_price)}` : '-' }}
                 </td>
 
                 <td v-else-if="column.visible && column.key === 'expirationDate'"
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.expiration_date ? formatDate(trade.expiration_date) : '-' }}
                 </td>
 
                 <td v-else-if="column.visible && column.key === 'contractSize'"
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.contract_size || '-' }}
                 </td>
 
                 <td v-else-if="column.visible && column.key === 'heartRate'"
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.heart_rate ? `${Math.round(trade.heart_rate)} BPM` : '-' }}
                 </td>
 
                 <td v-else-if="column.visible && column.key === 'sleepHours'"
                     :class="[getCellPadding, 'whitespace-nowrap text-sm text-gray-900 dark:text-white cursor-pointer']"
-                    @click="$router.push(`/trades/${trade.id}`)">
+                    @click="navigateToTradeOrPosition(trade)">
                   {{ trade.sleep_hours ? `${Number(trade.sleep_hours).toFixed(1)}h` : '-' }}
                 </td>
 
@@ -797,12 +849,32 @@
     <div v-if="showDeleteConfirm" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
       <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white dark:bg-gray-800">
         <div class="mt-3 text-center">
-          <h3 class="heading-card">Delete Trades</h3>
+          <h3 class="heading-card">{{ isPositionsMode ? 'Delete Positions' : 'Delete Trades' }}</h3>
           <div class="mt-2 px-7 py-3">
             <p class="text-sm text-gray-500 dark:text-gray-400">
-              Are you sure you want to delete {{ selectedTrades.length }} trade{{ selectedTrades.length === 1 ? '' : 's' }}?
+              <template v-if="isPositionsMode">
+                Delete {{ selectedTrades.length }} selected position{{ selectedTrades.length === 1 ? '' : 's' }} by removing the linked trades underneath them?
+              </template>
+              <template v-else>
+                Are you sure you want to delete {{ selectedTrades.length }} trade{{ selectedTrades.length === 1 ? '' : 's' }}?
+              </template>
               This action cannot be undone.
             </p>
+            <div v-if="isPositionsMode" class="mt-4 text-left">
+              <label class="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <input
+                  v-model="applyPositionActionsToTrades"
+                  type="checkbox"
+                  class="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                />
+                <span>
+                  Also delete all linked trades in each selected position
+                  <span v-if="selectedPositionLinkedTradeCount > 0" class="text-gray-500 dark:text-gray-400">
+                    ({{ selectedPositionLinkedTradeCount }} trade{{ selectedPositionLinkedTradeCount === 1 ? '' : 's' }})
+                  </span>
+                </span>
+              </label>
+            </div>
           </div>
           <div class="flex justify-center space-x-4 px-4 py-3">
             <button
@@ -813,7 +885,9 @@
             </button>
             <button
               @click="executeBulkDelete"
+              :disabled="isPositionsMode && !applyPositionActionsToTrades"
               class="px-4 py-2 bg-red-600 text-white text-base font-medium rounded-md shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500"
+              :class="{ 'opacity-50 cursor-not-allowed hover:bg-red-600': isPositionsMode && !applyPositionActionsToTrades }"
             >
               Delete
             </button>
@@ -826,7 +900,11 @@
     <div v-if="showBulkTagModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50" @click.self="showBulkTagModal = false">
       <div class="relative top-20 mx-auto p-5 border w-full max-w-md shadow-lg rounded-md bg-white dark:bg-gray-800">
         <div class="flex justify-between items-center mb-4">
-          <h3 class="heading-card">Add Tags to {{ selectedTrades.length }} Trade{{ selectedTrades.length === 1 ? '' : 's' }}</h3>
+          <h3 class="heading-card">
+            {{ isPositionsMode
+              ? `Add Tags to ${selectedTrades.length} Position${selectedTrades.length === 1 ? '' : 's'}`
+              : `Add Tags to ${selectedTrades.length} Trade${selectedTrades.length === 1 ? '' : 's'}` }}
+          </h3>
           <button
             @click="showBulkTagModal = false"
             class="text-gray-400 hover:text-gray-500"
@@ -844,6 +922,22 @@
           <TagManagement v-model="bulkTagsToAdd" />
         </div>
 
+        <div v-if="isPositionsMode" class="mb-4 rounded-lg border border-primary-200 dark:border-primary-800 bg-primary-50 dark:bg-primary-900/10 p-3">
+          <label class="flex items-start gap-2 text-sm text-primary-900 dark:text-primary-100">
+            <input
+              v-model="applyPositionActionsToTrades"
+              type="checkbox"
+              class="mt-0.5 h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+            />
+            <span>
+              Also add these tags to all linked trades in each selected position
+              <span v-if="selectedPositionLinkedTradeCount > 0" class="text-primary-700 dark:text-primary-300">
+                ({{ selectedPositionLinkedTradeCount }} linked trade{{ selectedPositionLinkedTradeCount === 1 ? '' : 's' }})
+              </span>
+            </span>
+          </label>
+        </div>
+
         <div class="flex justify-end space-x-2">
           <button
             @click="showBulkTagModal = false"
@@ -853,7 +947,7 @@
           </button>
           <button
             @click="executeBulkAddTags"
-            :disabled="bulkTagsToAdd.length === 0"
+            :disabled="bulkTagsToAdd.length === 0 || (isPositionsMode && !applyPositionActionsToTrades)"
             class="px-4 py-2 bg-primary-600 text-white text-base font-medium rounded-md shadow-sm hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Add Tags
@@ -879,11 +973,39 @@ import TagManagement from '@/components/trades/TagManagement.vue'
 import MdiIcon from '@/components/MdiIcon.vue'
 import { mdiNewspaper } from '@mdi/js'
 import api from '@/services/api'
+import { buildPositionDetailRoute } from '@/utils/positionsView'
 
 const tradesStore = useTradesStore()
 const { formatTime: formatTimeTz } = useUserTimezone()
 const route = useRoute()
 const router = useRouter()
+const currentTradeView = computed(() => route.query.view === 'positions' ? 'positions' : 'trades')
+const isPositionsMode = computed(() => currentTradeView.value === 'positions')
+const tradeFiltersKey = computed(() => {
+  const query = { ...(route.query || {}) }
+  delete query.view
+  return JSON.stringify(query)
+})
+const pageTitle = computed(() => isPositionsMode.value ? 'Positions' : 'Trades')
+const pageDescription = computed(() => (
+  isPositionsMode.value
+    ? 'Broker-linked positions based on your existing trade filters.'
+    : 'A list of all your trades including their details and performance.'
+))
+const summaryEntityLabel = computed(() => isPositionsMode.value ? 'position' : 'trade')
+const summaryWinRate = computed(() => {
+  if (!isPositionsMode.value) {
+    return tradesStore.winRate
+  }
+
+  const total = tradesStore.trades.length
+  if (total === 0) {
+    return '0.00'
+  }
+
+  const winning = tradesStore.trades.filter(trade => Number(trade.pnl) > 0).length
+  return ((winning / total) * 100).toFixed(2)
+})
 
 // MDI icons
 const newspaperIcon = mdiNewspaper
@@ -948,6 +1070,7 @@ const selectedTrades = ref([])
 const showDeleteConfirm = ref(false)
 const showBulkTagModal = ref(false)
 const bulkTagsToAdd = ref([])
+const applyPositionActionsToTrades = ref(true)
 
 // Column management
 const tableColumns = ref([])
@@ -1034,11 +1157,39 @@ const isAllSelected = computed(() => {
   return tradesStore.trades.length > 0 && selectedTrades.value.length === tradesStore.trades.length
 })
 
+const selectedPositionRecords = computed(() => {
+  if (!isPositionsMode.value) {
+    return []
+  }
+
+  const selectedIds = new Set(selectedTrades.value)
+  return tradesStore.trades.filter(trade => selectedIds.has(trade.id))
+})
+
+const selectedPositionTradeIds = computed(() => {
+  if (!isPositionsMode.value) {
+    return selectedTrades.value
+  }
+
+  return [...new Set(
+    selectedPositionRecords.value.flatMap(position =>
+      Array.isArray(position.tradeIds) ? position.tradeIds : []
+    )
+  )]
+})
+
+const selectedPositionLinkedTradeCount = computed(() => selectedPositionTradeIds.value.length)
+
 // Watch for pagination changes and refetch trades only
 // Analytics don't need to be refetched on pagination since they represent totals across ALL filtered data
 watch(
   () => tradesStore.pagination.page,
   () => {
+    if (isPositionsMode.value) {
+      tradesStore.fetchPositions()
+      return
+    }
+
     tradesStore.fetchTrades()
   }
 )
@@ -1171,7 +1322,16 @@ function formatTime(datetime) {
 }
 
 function handleFilter(filters) {
-  tradesStore.setFilters(filters)
+  const nextFilters = isPositionsMode.value
+    ? { ...filters, positionsOnly: true }
+    : { ...filters, positionsOnly: false }
+
+  tradesStore.setFilters(nextFilters)
+  if (isPositionsMode.value) {
+    tradesStore.fetchPositions()
+    return
+  }
+
   tradesStore.fetchTrades() // fetchTrades now includes analytics in parallel
 }
 
@@ -1218,6 +1378,33 @@ function clearStrategyFilter() {
   router.push({ path: '/trades' })
 }
 
+function navigateToTradeOrPosition(trade) {
+  const positionId = trade?.positionRouteId || trade?.id
+
+  if (isPositionsMode.value && positionId) {
+    router.push(buildPositionDetailRoute(positionId))
+    return
+  }
+
+  router.push(`/trades/${trade.id}`)
+}
+
+function setTradeViewMode(mode) {
+  if (currentTradeView.value === mode) {
+    return
+  }
+
+  const nextQuery = { ...route.query }
+  nextQuery.view = mode
+
+  if (mode === 'positions') {
+  } else {
+    delete nextQuery.positionsOnly
+  }
+
+  router.replace({ name: 'trades', query: nextQuery })
+}
+
 // Bulk selection functions
 function toggleSelectAll() {
   if (isAllSelected.value) {
@@ -1233,15 +1420,38 @@ function clearSelection() {
 
 function confirmBulkDelete() {
   if (selectedTrades.value.length === 0) return
+  if (isPositionsMode.value && !applyPositionActionsToTrades.value) return
   showDeleteConfirm.value = true
+}
+
+function resolveSelectedTradeIdsForBulkAction() {
+  if (!isPositionsMode.value) {
+    return selectedTrades.value
+  }
+
+  if (!applyPositionActionsToTrades.value) {
+    return []
+  }
+
+  return selectedPositionTradeIds.value
 }
 
 async function executeBulkDelete() {
   try {
-    await tradesStore.bulkDeleteTrades(selectedTrades.value)
+    const tradeIds = resolveSelectedTradeIdsForBulkAction()
+    if (tradeIds.length === 0) {
+      return
+    }
+
+    await tradesStore.bulkDeleteTrades(tradeIds)
     selectedTrades.value = []
     showDeleteConfirm.value = false
     // Refresh the trades list
+    if (isPositionsMode.value) {
+      await tradesStore.fetchPositions()
+      return
+    }
+
     await tradesStore.fetchTrades()
   } catch (error) {
     console.error('Failed to delete trades:', error)
@@ -1252,8 +1462,13 @@ async function executeBulkAddTags() {
   if (bulkTagsToAdd.value.length === 0) return
 
   try {
+    const tradeIds = resolveSelectedTradeIdsForBulkAction()
+    if (tradeIds.length === 0) {
+      return
+    }
+
     const response = await api.post('/trades/bulk/tags', {
-      tradeIds: selectedTrades.value,
+      tradeIds,
       tags: bulkTagsToAdd.value
     })
 
@@ -1265,6 +1480,11 @@ async function executeBulkAddTags() {
     showBulkTagModal.value = false
 
     // Refresh the trades list
+    if (isPositionsMode.value) {
+      await tradesStore.fetchPositions()
+      return
+    }
+
     await tradesStore.fetchTrades()
   } catch (error) {
     console.error('[ERROR] Failed to add tags:', error)
@@ -1319,10 +1539,37 @@ onMounted(() => {
   // Only fetch trades immediately if there are no URL parameters
   // TradeFilters component will handle URL parameters and trigger fetch automatically
   if (!hasFiltersInUrl) {
-    tradesStore.fetchTrades() // fetchTrades now includes analytics in parallel
+    if (isPositionsMode.value) {
+      tradesStore.fetchPositions()
+    } else {
+      tradesStore.fetchTrades() // fetchTrades now includes analytics in parallel
+    }
   }
 
   // Initialize table scroll width after component is mounted
   setTimeout(() => updateTableScrollWidth(), 200)
 })
+
+watch(
+  () => currentTradeView.value,
+  async (view, previousView) => {
+    if (view !== previousView) {
+      clearSelection()
+      applyPositionActionsToTrades.value = true
+      const nextFilters = {
+        ...tradesStore.filters,
+        positionsOnly: view === 'positions',
+        status: route.query.status || ''
+      }
+
+      tradesStore.setFilters(nextFilters)
+      if (view === 'positions') {
+        await tradesStore.fetchPositions()
+      } else {
+        await tradesStore.fetchTrades()
+      }
+    }
+  },
+  { immediate: true }
+)
 </script>

@@ -514,8 +514,10 @@ const brokerSyncController = {
         });
       }
 
-      // Check connection status
-      if (connection.connectionStatus !== 'active') {
+      // Manual retries must remain possible even after a failed sync put the
+      // connection into "error". The status is a warning state, not a hard lock.
+      const manuallySyncableStatuses = new Set(['active', 'error', 'expired']);
+      if (!manuallySyncableStatuses.has(connection.connectionStatus)) {
         return res.status(400).json({
           success: false,
           error: `Cannot sync: connection status is ${connection.connectionStatus}`

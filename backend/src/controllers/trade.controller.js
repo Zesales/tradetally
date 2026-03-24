@@ -17,7 +17,11 @@ const ChartService = require('../services/chartService');
 const axios = require('axios');
 const { sendV1NotImplemented } = require('../utils/apiResponse');
 const { getUserTimezone } = require('../utils/timezone');
+const ClosedPositionQueryService = require('../services/openPositions/closedPositionQuery.service');
+const ClosedPositionAggregationService = require('../services/openPositions/closedPositionAggregation.service');
 const OpenPositionAggregationService = require('../services/openPositions/openPositionAggregation.service');
+const OpenPositionIdentityService = require('../services/openPositions/openPositionIdentity.service');
+const OpenPositionTradeTransformerService = require('../services/openPositions/openPositionTradeTransformer.service');
 
 // Helper function to invalidate analytics cache for a user
 function invalidateAnalyticsCache(userId) {
@@ -34,9 +38,7 @@ function invalidateAnalyticsCache(userId) {
 }
 
 const tradeController = {
-  async getUserTrades(req, res, next) {
-    const requestStartTime = Date.now();
-    console.log('[PERF] getUserTrades started');
+  async getClosedPositions(req, res, next) {
     try {
       const {
         symbol, symbolExact, startDate, endDate, exitStartDate, exitEndDate, tags, strategy, sector,
@@ -45,6 +47,118 @@ const tradeController = {
         status, minPnl, maxPnl, pnlType, broker, brokers, accounts,
         limit = 50, offset = 0
       } = req.query;
+
+      const filters = {
+        symbol,
+        symbolExact: symbolExact === 'true',
+        startDate,
+        endDate,
+        exitStartDate,
+        exitEndDate,
+        tags: tags ? ensureString(tags).split(',').map(t => t.trim()).filter(Boolean) : undefined,
+        strategy,
+        sector,
+        strategies: strategies ? ensureString(strategies).split(',') : undefined,
+        sectors: sectors ? ensureString(sectors).split(',') : undefined,
+        hasNews,
+        daysOfWeek: daysOfWeek ? ensureString(daysOfWeek).split(',').map(d => parseInt(d)) : undefined,
+        instrumentTypes: instrumentTypes ? ensureString(instrumentTypes).split(',') : undefined,
+        optionTypes: optionTypes ? ensureString(optionTypes).split(',') : undefined,
+        qualityGrades: qualityGrades ? ensureString(qualityGrades).split(',') : undefined,
+        side,
+        minPrice: minPrice ? parseFloat(minPrice) : undefined,
+        maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+        minQuantity: minQuantity ? parseInt(minQuantity) : undefined,
+        maxQuantity: maxQuantity ? parseInt(maxQuantity) : undefined,
+        status,
+        minPnl: (minPnl !== undefined && minPnl !== null && minPnl !== '') ? parseFloat(minPnl) : undefined,
+        maxPnl: (maxPnl !== undefined && maxPnl !== null && maxPnl !== '') ? parseFloat(maxPnl) : undefined,
+        pnlType,
+        broker,
+        brokers,
+        accounts: accounts ? ensureString(accounts).split(',') : undefined,
+        limit: 5000,
+        offset: 0
+      };
+
+      const { positions: allPositions } = await ClosedPositionQueryService.buildRecordsForUser(req.user.id, filters);
+      const paginatedPositions = ClosedPositionAggregationService.paginate(allPositions, parseInt(limit, 10), parseInt(offset, 10));
+
+      res.json({
+        positions: paginatedPositions,
+        count: paginatedPositions.length,
+        total: allPositions.length,
+        limit: parseInt(limit, 10),
+        offset: parseInt(offset, 10),
+        totalPages: Math.ceil(allPositions.length / parseInt(limit, 10))
+      });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getClosedPosition(req, res, next) {
+    try {
+      const { symbol, symbolExact, startDate, endDate, exitStartDate, exitEndDate, tags, strategy, sector,
+        strategies, sectors, hasNews, daysOfWeek, instrumentTypes, optionTypes, qualityGrades,
+        side, minPrice, maxPrice, minQuantity, maxQuantity,
+        status, minPnl, maxPnl, pnlType, broker, brokers, accounts } = req.query;
+
+      const filters = {
+        symbol,
+        symbolExact: symbolExact === 'true',
+        startDate,
+        endDate,
+        exitStartDate,
+        exitEndDate,
+        tags: tags ? ensureString(tags).split(',').map(t => t.trim()).filter(Boolean) : undefined,
+        strategy,
+        sector,
+        strategies: strategies ? ensureString(strategies).split(',') : undefined,
+        sectors: sectors ? ensureString(sectors).split(',') : undefined,
+        hasNews,
+        daysOfWeek: daysOfWeek ? ensureString(daysOfWeek).split(',').map(d => parseInt(d)) : undefined,
+        instrumentTypes: instrumentTypes ? ensureString(instrumentTypes).split(',') : undefined,
+        optionTypes: optionTypes ? ensureString(optionTypes).split(',') : undefined,
+        qualityGrades: qualityGrades ? ensureString(qualityGrades).split(',') : undefined,
+        side,
+        minPrice: minPrice ? parseFloat(minPrice) : undefined,
+        maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+        minQuantity: minQuantity ? parseInt(minQuantity) : undefined,
+        maxQuantity: maxQuantity ? parseInt(maxQuantity) : undefined,
+        status,
+        minPnl: (minPnl !== undefined && minPnl !== null && minPnl !== '') ? parseFloat(minPnl) : undefined,
+        maxPnl: (maxPnl !== undefined && maxPnl !== null && maxPnl !== '') ? parseFloat(maxPnl) : undefined,
+        pnlType,
+        broker,
+        brokers,
+        accounts: accounts ? ensureString(accounts).split(',') : undefined
+      };
+
+      const position = await ClosedPositionQueryService.getPositionById(req.user.id, req.params.id, filters);
+
+      if (!position) {
+        return res.status(404).json({ error: 'Position not found' });
+      }
+
+      res.json({ position });
+    } catch (error) {
+      next(error);
+    }
+  },
+
+  async getUserTrades(req, res, next) {
+    const requestStartTime = Date.now();
+    console.log('[PERF] getUserTrades started');
+    try {
+      const {
+        symbol, symbolExact, startDate, endDate, exitStartDate, exitEndDate, tags, strategy, sector,
+        strategies, sectors, hasNews, daysOfWeek, instrumentTypes, optionTypes, qualityGrades,
+        side, minPrice, maxPrice, minQuantity, maxQuantity,
+        status, minPnl, maxPnl, pnlType, broker, brokers, accounts, positionsOnly,
+        limit = 50, offset = 0
+      } = req.query;
+      const isPositionsOnly = positionsOnly === 'true' || positionsOnly === '1';
 
       const filters = {
         symbol,
@@ -93,31 +207,22 @@ const tradeController = {
       // Check if count should be skipped for faster initial load
       const skipCount = req.query.skipCount === 'true' || req.query.skipCount === '1';
       
-      // Get trades with pagination
-      console.log('[PERF] About to call Trade.findByUser, elapsed:', Date.now() - requestStartTime, 'ms');
-      const trades = await Trade.findByUser(req.user.id, filters);
-      console.log('[PERF] Trade.findByUser completed, elapsed:', Date.now() - requestStartTime, 'ms');
+      let trades;
+      let total;
 
-      // Map snake_case database fields to camelCase for API response
-      trades.forEach(trade => {
-        if (trade.contract_month !== undefined) trade.contractMonth = trade.contract_month;
-        if (trade.contract_year !== undefined) trade.contractYear = trade.contract_year;
-        if (trade.underlying_asset !== undefined) trade.underlyingAsset = trade.underlying_asset;
-        if (trade.instrument_type !== undefined) trade.instrumentType = trade.instrument_type;
-        if (trade.strike_price !== undefined) trade.strikePrice = trade.strike_price;
-        if (trade.expiration_date !== undefined) trade.expirationDate = trade.expiration_date;
-        if (trade.option_type !== undefined) trade.optionType = trade.option_type;
-        if (trade.contract_size !== undefined) trade.contractSize = trade.contract_size;
-        if (trade.underlying_symbol !== undefined) trade.underlyingSymbol = trade.underlying_symbol;
-        if (trade.point_value !== undefined) trade.pointValue = trade.point_value;
-        if (trade.tick_size !== undefined) trade.tickSize = trade.tick_size;
-        if (trade.stop_loss !== undefined) trade.stopLoss = trade.stop_loss;
-        if (trade.take_profit !== undefined) trade.takeProfit = trade.take_profit;
-        if (trade.r_value !== undefined) trade.rValue = trade.r_value;
-        if (trade.quality_grade !== undefined) trade.qualityGrade = trade.quality_grade;
-        if (trade.quality_score !== undefined) trade.qualityScore = trade.quality_score;
-        if (trade.quality_metrics !== undefined) trade.qualityMetrics = trade.quality_metrics;
-      });
+      if (isPositionsOnly) {
+        const positionFilters = { ...filters, limit: 5000, offset: 0 };
+        console.log('[PERF] About to call Trade.findByUser for positions view, elapsed:', Date.now() - requestStartTime, 'ms');
+        const { positions: aggregatedPositions } = await ClosedPositionQueryService.buildRecordsForUser(req.user.id, positionFilters);
+        console.log('[PERF] Trade.findByUser for positions view completed, elapsed:', Date.now() - requestStartTime, 'ms');
+        total = aggregatedPositions.length;
+        trades = ClosedPositionAggregationService.paginate(aggregatedPositions, filters.limit, filters.offset);
+      } else {
+        console.log('[PERF] About to call Trade.findByUser, elapsed:', Date.now() - requestStartTime, 'ms');
+        trades = await Trade.findByUser(req.user.id, filters);
+        console.log('[PERF] Trade.findByUser completed, elapsed:', Date.now() - requestStartTime, 'ms');
+        OpenPositionTradeTransformerService.normalizeTradesForApi(trades);
+      }
 
       // Prepare response with trades immediately
       const response = {
@@ -128,15 +233,19 @@ const tradeController = {
       };
 
       // Get total count without pagination (can be skipped for faster initial load)
-      if (!skipCount) {
+      if (isPositionsOnly) {
+        response.total = total;
+        response.totalPages = Math.ceil(total / filters.limit);
+      } else if (!skipCount) {
         const totalCountFilters = { ...filters };
         delete totalCountFilters.limit;
         delete totalCountFilters.offset;
 
-        // Use getCountWithFilters for regular trades table counting
-        console.log('[PERF] About to call Trade.getCountWithFilters, elapsed:', Date.now() - requestStartTime, 'ms');
-        const total = await Trade.getCountWithFilters(req.user.id, totalCountFilters);
-        console.log('[PERF] Trade.getCountWithFilters completed, total:', total, ', elapsed:', Date.now() - requestStartTime, 'ms');
+        if (!isPositionsOnly) {
+          console.log('[PERF] About to call Trade.getCountWithFilters, elapsed:', Date.now() - requestStartTime, 'ms');
+          total = await Trade.getCountWithFilters(req.user.id, totalCountFilters);
+          console.log('[PERF] Trade.getCountWithFilters completed, total:', total, ', elapsed:', Date.now() - requestStartTime, 'ms');
+        }
         
         response.total = total;
         response.totalPages = Math.ceil(total / filters.limit);
@@ -160,8 +269,9 @@ const tradeController = {
         symbol, symbolExact, startDate, endDate, tags, strategy, sector,
         strategies, sectors, hasNews, daysOfWeek, instrumentTypes, optionTypes, qualityGrades,
         side, minPrice, maxPrice, minQuantity, maxQuantity,
-        status, minPnl, maxPnl, pnlType, broker, brokers
+        status, minPnl, maxPnl, pnlType, broker, brokers, positionsOnly
       } = req.query;
+      const isPositionsOnly = positionsOnly === 'true' || positionsOnly === '1';
 
       const filters = {
         symbol,
@@ -191,7 +301,13 @@ const tradeController = {
         brokers: brokers ? ensureString(brokers).split(',') : undefined
       };
 
-      const total = await Trade.getCountWithFilters(req.user.id, filters);
+      let total;
+      if (isPositionsOnly) {
+        const { positions } = await ClosedPositionQueryService.buildRecordsForUser(req.user.id, filters);
+        total = positions.length;
+      } else {
+        total = await Trade.getCountWithFilters(req.user.id, filters);
+      }
       
       res.json({
         total: total,

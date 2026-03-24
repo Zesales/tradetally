@@ -1303,6 +1303,8 @@
 import { ref, onMounted, nextTick, watch, computed, onUnmounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
 import { useRouter } from 'vue-router'
+import { buildPositionTimelineRows, buildPositionDetailSummary } from '@/utils/positionExecutions'
+import { buildPositionDetailRoute, buildPositionsListRoute } from '@/utils/positionsView'
 import { format } from 'date-fns'
 import { formatTradeDate, formatLocalDate } from '@/utils/date'
 import Chart from 'chart.js/auto'
@@ -1392,6 +1394,9 @@ function getOptionPnL(position) {
 
 function getOpenPositionUiKey(position) {
   if (!position) return ''
+  if (position.id) return String(position.id)
+  if (position.positionRouteId) return String(position.positionRouteId)
+  if (position.legacyId) return String(position.legacyId)
   if (position.instrumentType === 'option') {
     return [
       position.symbol || '',
@@ -1409,100 +1414,14 @@ function getTradeReferenceLabel(trade) {
 }
 
 function getOpenPositionDetailRows(position) {
-  if (!position?.trades || !Array.isArray(position.trades)) {
-    return []
-  }
-
-  const details = position.trades.flatMap((trade, tradeIndex) => {
-    const executions = Array.isArray(trade.executions)
-      ? trade.executions.filter(execution => (parseFloat(execution?.quantity) || 0) > 0)
-      : []
-
-    if (executions.length > 0) {
-      let entryIndex = 0
-      let exitIndex = 0
-
-      return executions.map((execution, executionIndex) => {
-        const type = String(execution?.type || '').toLowerCase()
-        if (type === 'exit') {
-          exitIndex += 1
-        } else {
-          entryIndex += 1
-        }
-
-        const normalizedType = type === 'exit' ? 'exit' : 'entry'
-        const labelIndex = normalizedType === 'exit' ? exitIndex : entryIndex
-
-        return {
-          id: `${trade.id || tradeIndex}-execution-${executionIndex}`,
-          label: `${normalizedType === 'exit' ? 'Exit' : 'Entry'} ${labelIndex}`,
-          side: trade.side,
-          quantity: parseFloat(execution?.quantity) || 0,
-          signedQuantity: normalizedType === 'exit'
-            ? -(parseFloat(execution?.quantity) || 0)
-            : (parseFloat(execution?.quantity) || 0),
-          price: parseFloat(execution?.price) || null,
-          totalCost: execution?.price !== undefined && execution?.price !== null
-            ? (normalizedType === 'exit' ? -1 : 1) * ((parseFloat(execution.price) || 0) * (parseFloat(execution.quantity) || 0))
-            : null,
-          tradeDate: execution?.datetime || trade.trade_date,
-          type: normalizedType,
-          tradeId: trade.id || null
-        }
-      })
-    }
-
-    return [{
-      id: `${trade.id || tradeIndex}-trade`,
-      label: getTradeReferenceLabel(trade),
-      side: trade.side,
-      quantity: parseFloat(trade.quantity) || 0,
-      signedQuantity: parseFloat(trade.quantity) || 0,
-      price: parseFloat(trade.entry_price) || null,
-      totalCost: (parseFloat(trade.entry_price) || 0) * (parseFloat(trade.quantity) || 0),
-      tradeDate: trade.trade_date,
-      type: 'trade',
-      tradeId: trade.id || null
-    }]
-  })
-
-  const sortedDetails = [...details].sort((a, b) => {
-    const timeA = new Date(a.tradeDate || 0).getTime()
-    const timeB = new Date(b.tradeDate || 0).getTime()
-    if (timeA !== timeB) return timeA - timeB
-    return String(a.id).localeCompare(String(b.id))
-  })
-
-  let runningQuantity = 0
-  return sortedDetails.map(detail => {
-    const delta = Number.isFinite(parseFloat(detail.signedQuantity))
-      ? parseFloat(detail.signedQuantity)
-      : 0
-    runningQuantity += delta
-
-    return {
-      ...detail,
-      runningQuantity
-    }
-  })
+  return buildPositionTimelineRows(position?.trades || []).map(detail => ({
+    ...detail,
+    label: detail.label || getTradeReferenceLabel({ id: detail.tradeId || detail.id })
+  }))
 }
 
 function getOpenPositionDetailSummary(position) {
-  const details = getOpenPositionDetailRows(position)
-  if (details.length === 0) return '0 entries'
-
-  const entryCount = details.filter(detail => detail.type === 'entry' || detail.type === 'trade').length
-  const exitCount = details.filter(detail => detail.type === 'exit').length
-
-  if (exitCount === 0) {
-    return `${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}`
-  }
-
-  if (entryCount === 0) {
-    return `${exitCount} ${exitCount === 1 ? 'exit' : 'exits'}`
-  }
-
-  return `${entryCount} ${entryCount === 1 ? 'entry' : 'entries'}, ${exitCount} ${exitCount === 1 ? 'exit' : 'exits'}`
+  return buildPositionDetailSummary(getOpenPositionDetailRows(position))
 }
 
 function getOpenPositionDetailRowClass(detail) {
@@ -2411,13 +2330,11 @@ function navigateToTradesWithSymbol(symbol) {
 }
 
 function navigateToOpenPosition(position) {
+  const positionId = position?.id
   const symbol = position?.symbol
-  if (!symbol) return
+  if (!positionId && !symbol) return
 
-  router.push({
-    name: 'holding-detail',
-    params: { id: `trade-${symbol}` }
-  }).then(() => {
+  router.push(buildPositionDetailRoute(positionId || `trade-${symbol}`)).then(() => {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   })
 }
@@ -2430,10 +2347,7 @@ function navigateToAnalytics(section) {
 }
 
 function navigateToOpenTrades() {
-  router.push({
-    name: 'trades',
-    query: { status: 'open' }
-  }).then(() => {
+  router.push(buildPositionsListRoute({ status: 'open' })).then(() => {
     // Scroll to top of the page
     window.scrollTo({ top: 0, behavior: 'smooth' })
   })

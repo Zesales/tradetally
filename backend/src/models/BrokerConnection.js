@@ -206,9 +206,11 @@ class BrokerConnection {
           last_error_at = CURRENT_TIMESTAMP,
           last_error_message = $2,
           consecutive_failures = consecutive_failures + 1,
+          -- A sync failure should not hard-lock manual retries. Keep the
+          -- connection usable unless a credential test explicitly marks it bad.
           connection_status = CASE
-            WHEN consecutive_failures >= 2 THEN 'error'
-            ELSE connection_status
+            WHEN connection_status IN ('revoked', 'expired') THEN connection_status
+            ELSE 'active'
           END,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
