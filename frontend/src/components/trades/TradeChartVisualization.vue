@@ -53,8 +53,8 @@
           Load Chart
         </button>
         <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">
-          <span v-if="isBillingEnabled">Uses Finnhub API with high-precision intraday data</span>
-          <span v-else>Uses Finnhub (if configured) or Alpha Vantage for chart data</span>
+          <span v-if="isBillingEnabled">Uses the best available chart provider for high-precision market data</span>
+          <span v-else>Uses the best available configured chart provider for market data</span>
         </p>
       </div>
 
@@ -157,6 +157,10 @@ const props = defineProps({
   tradeId: {
     type: [String, Number],
     required: true
+  },
+  autoLoad: {
+    type: Boolean,
+    default: false
   }
 })
 
@@ -180,6 +184,10 @@ const requiresProUpgrade = computed(() => isBillingEnabled.value && userTier.val
 // Helper methods for source display
 const getSourceLabel = (source) => {
   switch (source) {
+    case 'binance':
+      return 'Binance'
+    case 'coinbase':
+      return 'Coinbase'
     case 'finnhub':
       return 'Finnhub Pro'
     case 'alphavantage':
@@ -193,6 +201,10 @@ const getSourceLabel = (source) => {
 
 const getSourceBadgeClass = (source) => {
   switch (source) {
+    case 'binance':
+      return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+    case 'coinbase':
+      return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
     case 'finnhub':
       return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200'
     case 'alphavantage':
@@ -216,17 +228,12 @@ const parseDateTimeToTimestamp = (dateStr) => {
   try {
     const str = dateStr.toString()
 
-    // If it's an ISO datetime string, parse components directly to avoid timezone issues
-    // Matches formats like: 2025-11-15T14:30:00 or 2025-11-15T14:30:00.000Z
-    const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?/)
-    if (isoMatch) {
-      const [, year, month, day, hour, minute, second] = isoMatch.map(Number)
-      // Create date in local timezone (ignoring any timezone info from the string)
-      const dateObj = new Date(year, month - 1, day, hour, minute, second)
-      return Math.floor(dateObj.getTime() / 1000)
+    // Preserve timezone info from backend ISO timestamps whenever possible.
+    const parsedMs = Date.parse(str)
+    if (!Number.isNaN(parsedMs)) {
+      return Math.floor(parsedMs / 1000)
     }
 
-    // Fallback to standard parsing (will have timezone issues but better than nothing)
     const dateObj = new Date(dateStr)
     if (isNaN(dateObj.getTime())) return null
     return Math.floor(dateObj.getTime() / 1000)
@@ -744,27 +751,33 @@ const createTradeChart = () => {
     let visibleFrom, visibleTo
     
     // If trade times are outside data range, show all available data
+    const isCryptoTrade = trade.instrumentType === 'crypto'
+
     if (!entryInRange && !exitInRange) {
       console.log('Trade times outside data range, showing all available data')
       visibleFrom = dataStartTime
       visibleTo = dataEndTime
     } else if (tradeDuration === 0 || tradeDuration < 86400) { // Same day trade or no exit
-      // For intraday trades, show the full trading day with some context
-      // Get the entry date in the user's timezone and create market hours for that day
-      const entryDate = new Date(entryTimestamp * 1000)
-      const entryDateStr = entryDate.toISOString().split('T')[0] // YYYY-MM-DD
-      
-      // Create market hours for the entry date (9:30 AM - 4:00 PM ET)
-      // Convert to UTC: ET is UTC-5 (EST) or UTC-4 (EDT)
-      // For simplicity, assume EST (UTC-5)
-      const marketOpen = new Date(entryDateStr + 'T14:30:00.000Z') // 9:30 AM ET = 14:30 UTC
-      const marketClose = new Date(entryDateStr + 'T21:00:00.000Z') // 4:00 PM ET = 21:00 UTC
-      
-      const dayStart = Math.floor(marketOpen.getTime() / 1000)
-      const dayEnd = Math.floor(marketClose.getTime() / 1000)
-      
-      visibleFrom = Math.max(dayStart, dataStartTime)
-      visibleTo = Math.min(dayEnd, dataEndTime)
+      if (isCryptoTrade) {
+        const defaultEnd = entryTimestamp + (5 * 60)
+        const effectiveExit = exitTimestamp || defaultEnd
+        const focusPadding = Math.max(15 * 60, Math.ceil((effectiveExit - entryTimestamp) * 8))
+
+        visibleFrom = Math.max(entryTimestamp - focusPadding, dataStartTime)
+        visibleTo = Math.min(effectiveExit + focusPadding, dataEndTime)
+      } else {
+        // For stock intraday trades, show the full trading day with some context
+        const entryDate = new Date(entryTimestamp * 1000)
+        const entryDateStr = entryDate.toISOString().split('T')[0]
+        const marketOpen = new Date(entryDateStr + 'T14:30:00.000Z')
+        const marketClose = new Date(entryDateStr + 'T21:00:00.000Z')
+
+        const dayStart = Math.floor(marketOpen.getTime() / 1000)
+        const dayEnd = Math.floor(marketClose.getTime() / 1000)
+
+        visibleFrom = Math.max(dayStart, dataStartTime)
+        visibleTo = Math.min(dayEnd, dataEndTime)
+      }
     } else {
       // For multi-day trades, focus on the trade period with padding
       const padding = Math.max(tradeDuration * 0.2, 86400) // 20% padding, minimum 1 day
@@ -885,7 +898,11 @@ watch(() => document.documentElement.classList.contains('dark'), () => {
   }
 })
 
-// Don't auto-load chart data on mount anymore
+onMounted(() => {
+  if (props.autoLoad) {
+    loadChart()
+  }
+})
 
 onUnmounted(() => {
   if (chart) {
