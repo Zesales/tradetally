@@ -998,10 +998,15 @@ class BitunixService {
     };
   }
 
-  parsePendingPosition(position, marginCoin, pendingOrdersIndex = {}, pendingTpSlIndex = {}) {
+  parsePendingPosition(position, marginCoin, pendingOrdersIndex = {}, pendingTpSlIndex = {}, historyTradeIndex = {}) {
     const side = this.normalizePositionSide(position.side);
     const quantity = Math.abs(parseFloat(position.qty || 0));
+    const maxQuantity = Math.max(
+      quantity,
+      Math.abs(this.parseNumber(position.maxQty) || 0)
+    );
     const entryTime = this.toIsoString(position.ctime);
+    const updatedTime = this.toIsoString(position.utime || position.mtime || position.ctime);
     const originalCurrency = this.normalizeOriginalCurrency(marginCoin);
     const tradingFees = Math.abs(parseFloat(position.fee || 0));
     const fundingFees = Math.abs(parseFloat(position.funding || 0));
@@ -1023,6 +1028,117 @@ class BitunixService {
       return null;
     }
 
+    const historyExecutions = Array.isArray(historyTradeIndex[positionId])
+      ? [...historyTradeIndex[positionId]].sort((a, b) => new Date(a.datetime) - new Date(b.datetime))
+      : [];
+
+    const buildSyntheticExecution = (type, executionQuantity, datetime, extra = {}) => ({
+      type,
+      action: type === 'exit'
+        ? (side === 'short' ? 'buy' : 'sell')
+        : (side === 'short' ? 'sell' : 'buy'),
+      datetime,
+      price: type === 'entry' ? (parseFloat(position.avgOpenPrice || 0) || null) : null,
+      quantity: executionQuantity,
+      side,
+      positionId,
+      leverage,
+      notionalValue,
+      marginUsed,
+      unrealizedPnl: this.parseNumber(position.unrealizedPNL),
+      realizedPnl: this.parseNumber(position.realizedPNL),
+      liquidationPrice: this.parseNumber(position.liqPrice),
+      marginRate: this.parseNumber(position.marginRate),
+      marginMode: position.marginMode || null,
+      positionMode: position.positionMode || null,
+      pendingOrders: relevantPendingOrders,
+      positionTpSlOrders,
+      synthetic: true,
+      ...extra
+    });
+
+    const getExecutionTotals = (executions = []) => executions.reduce((acc, execution) => {
+      const qty = Math.abs(this.parseNumber(execution?.quantity) || 0);
+      const type = String(execution?.type || '').toLowerCase();
+      const action = String(execution?.action || execution?.side || '').toLowerCase();
+
+      const isEntryAction = side === 'short'
+        ? (action === 'sell' || action === 'short')
+        : (action === 'buy' || action === 'long');
+      const isExitAction = side === 'short'
+        ? (action === 'buy' || action === 'long')
+        : (action === 'sell' || action === 'short');
+
+      if (type === 'entry' || isEntryAction) {
+        acc.entry += qty;
+      } else if (type === 'exit' || isExitAction) {
+        acc.exit += qty;
+      }
+
+      return acc;
+    }, { entry: 0, exit: 0 });
+
+    const executionData = (() => {
+      const tolerance = 1e-8;
+
+      if (!historyExecutions.length) {
+        const syntheticExecutions = [
+          buildSyntheticExecution('entry', maxQuantity || quantity, entryTime, {
+            syntheticReason: 'pending-position-entry'
+          })
+        ];
+
+        const closedQuantity = Math.max((maxQuantity || quantity) - quantity, 0);
+        if (closedQuantity > tolerance) {
+          syntheticExecutions.push(
+            buildSyntheticExecution('exit', closedQuantity, updatedTime || entryTime, {
+              syntheticReason: 'pending-position-partial-close'
+            })
+          );
+        }
+
+        return syntheticExecutions;
+      }
+
+      const reconciledExecutions = [...historyExecutions];
+      const totals = getExecutionTotals(reconciledExecutions);
+      const missingEntryQuantity = Math.max(maxQuantity - totals.entry, 0);
+
+      if (missingEntryQuantity > tolerance) {
+        reconciledExecutions.unshift(
+          buildSyntheticExecution('entry', missingEntryQuantity, entryTime, {
+            syntheticReason: 'missing-entry-coverage'
+          })
+        );
+        reconciledExecutions.push(
+          buildSyntheticExecution('exit', missingEntryQuantity, updatedTime || entryTime, {
+            syntheticReason: 'missing-entry-reconciliation'
+          })
+        );
+      }
+
+      const reconciledTotals = getExecutionTotals(reconciledExecutions);
+      const netQuantity = Math.max(reconciledTotals.entry - reconciledTotals.exit, 0);
+      const missingExitQuantity = Math.max(netQuantity - quantity, 0);
+      const missingNetEntryQuantity = Math.max(quantity - netQuantity, 0);
+
+      if (missingExitQuantity > tolerance) {
+        reconciledExecutions.push(
+          buildSyntheticExecution('exit', missingExitQuantity, updatedTime || entryTime, {
+            syntheticReason: 'net-position-reconciliation'
+          })
+        );
+      } else if (missingNetEntryQuantity > tolerance) {
+        reconciledExecutions.push(
+          buildSyntheticExecution('entry', missingNetEntryQuantity, entryTime, {
+            syntheticReason: 'net-position-top-up'
+          })
+        );
+      }
+
+      return reconciledExecutions.sort((a, b) => new Date(a.datetime) - new Date(b.datetime));
+    })();
+
     return {
       symbol: this.normalizeSymbol(position.symbol),
       side,
@@ -1042,42 +1158,21 @@ class BitunixService {
       stopLoss,
       takeProfit,
       takeProfitTargets,
-      executionData: [
-        {
-          type: 'entry',
-          action: side === 'short' ? 'sell' : 'buy',
-          datetime: entryTime,
-          price: parseFloat(position.avgOpenPrice || 0) || null,
-          quantity,
-          side,
-          positionId,
-          leverage,
-          notionalValue,
-          marginUsed,
-          unrealizedPnl: this.parseNumber(position.unrealizedPNL),
-          realizedPnl: this.parseNumber(position.realizedPNL),
-          liquidationPrice: this.parseNumber(position.liqPrice),
-          marginRate: this.parseNumber(position.marginRate),
-          marginMode: position.marginMode || null,
-          positionMode: position.positionMode || null,
-          pendingOrders: relevantPendingOrders,
-          positionTpSlOrders
-        }
-      ]
+      executionData
     };
   }
 
   parsePositions(historyPositions, pendingPositions, pendingOrders, pendingTpSlOrders, marginCoin, historyTrades = []) {
     const pendingOrdersIndex = this.buildPendingOrdersIndex(pendingOrders);
     const pendingTpSlIndex = this.buildPendingTpSlIndex(pendingTpSlOrders);
-    const historyTradeIndex = this.buildHistoryTradesIndex(historyTrades, historyPositions);
+    const historyTradeIndex = this.buildHistoryTradesIndex(historyTrades, historyPositions, pendingPositions);
 
     const closedTrades = historyPositions
       .map(position => this.parseClosedPosition(position, marginCoin, historyTradeIndex))
       .filter(Boolean);
 
     const openTrades = pendingPositions
-      .map(position => this.parsePendingPosition(position, marginCoin, pendingOrdersIndex, pendingTpSlIndex))
+      .map(position => this.parsePendingPosition(position, marginCoin, pendingOrdersIndex, pendingTpSlIndex, historyTradeIndex))
       .filter(Boolean);
 
     return [...closedTrades, ...openTrades];

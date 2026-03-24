@@ -80,7 +80,7 @@
                         {{ format(expandedMonth, 'MMMM') }} {{ showRValue ? 'R-Value' : 'P&L' }}
                       </dt>
                       <dd class="mt-1 text-xl sm:text-2xl lg:text-3xl font-semibold whitespace-nowrap" :class="monthlyTotal >= 0 ? 'text-green-600' : 'text-red-600'">
-                        {{ showRValue ? formatRValue(monthlyTotal) : '$' + formatNumber(monthlyTotal) }}
+                        {{ showRValue ? formatRValue(monthlyTotal) : '$' + formatCalendarCurrency(monthlyTotal) }}
                       </dd>
                       <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                         {{ showRValue ? 'Performance in R' : 'Net profit and loss' }}
@@ -93,7 +93,7 @@
                         Avg Initial Risk
                       </dt>
                       <dd class="mt-1 text-xl sm:text-2xl lg:text-3xl font-semibold whitespace-nowrap text-gray-900 dark:text-white">
-                        {{ monthlyRiskTradeCount > 0 ? '$' + formatNumber(monthlyAvgRiskAmount) : 'N/A' }}
+                        {{ monthlyRiskTradeCount > 0 ? '$' + formatCalendarCurrency(monthlyAvgRiskAmount) : 'N/A' }}
                       </dd>
                       <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                         {{ monthlyRiskTradeCount > 0
@@ -108,7 +108,7 @@
                         Year To Date
                       </dt>
                       <dd class="mt-1 text-xl sm:text-2xl lg:text-3xl font-semibold whitespace-nowrap" :class="ytdPnl >= 0 ? 'text-green-600' : 'text-red-600'">
-                        {{ '$' + formatNumber(ytdPnl) }}
+                        {{ '$' + formatCalendarCurrency(ytdPnl) }}
                       </dd>
                       <div class="mt-2 text-xs text-gray-500 dark:text-gray-400">
                         Through {{ format(expandedMonth, 'MMMM') }}
@@ -144,7 +144,7 @@
                   </div>
                   <div v-if="day.pnl !== undefined && day.trades > 0" class="mt-1">
                     <p class="text-xs sm:text-sm font-semibold truncate" :class="getDayPnlTextColor(day)">
-                      {{ showRValue ? formatRValue(day.rValue || 0, 1) : '$' + formatNumber(day.pnl, 0) }}
+                      {{ showRValue ? formatRValue(day.rValue || 0, 1) : '$' + formatCalendarCurrency(day.pnl) }}
                     </p>
                     <p class="text-xs" :class="getDaySubTextColor(day)">
                       {{ day.trades }} {{ day.trades === 1 ? 'trade' : 'trades' }}
@@ -155,7 +155,7 @@
               <!-- Week P/L or R-Value Column -->
               <div class="flex items-center justify-center border border-gray-200 dark:border-gray-700 rounded-lg p-2 sm:p-3 bg-gray-50 dark:bg-gray-800">
                 <p class="text-xs sm:text-sm font-semibold" :class="getWeekTotal(week) >= 0 ? 'text-green-600' : 'text-red-600'">
-                  {{ showRValue ? formatRValue(week.weekRValue || 0, 1) : '$' + formatNumber(week.weekPnl, 0) }}
+                  {{ showRValue ? formatRValue(week.weekRValue || 0, 1) : '$' + formatCalendarCurrency(week.weekPnl) }}
                 </p>
               </div>
             </div>
@@ -250,7 +250,7 @@
                 </div>
                 <div class="text-right">
                   <p class="font-semibold" :class="(contrib.pnl || 0) >= 0 ? 'text-green-600' : 'text-red-600'">
-                    {{ showRValue && contrib.r_value != null ? formatRValue(contrib.r_value) : '$' + formatNumber(contrib.pnl) }}
+                    {{ showRValue && contrib.r_value != null ? formatRValue(contrib.r_value) : '$' + formatCalendarCurrency(contrib.pnl) }}
                   </p>
                   <p v-if="showRValue && contrib.r_value == null && !contrib.is_partial" class="text-xs text-gray-400">
                     No R data
@@ -259,7 +259,7 @@
                     Partial
                   </p>
                   <p v-if="contrib.risk_amount != null" class="text-xs text-gray-500 dark:text-gray-400">
-                    Risk ${{ formatNumber(contrib.risk_amount) }}
+                    Risk ${{ formatCalendarCurrency(contrib.risk_amount) }}
                   </p>
                 </div>
               </div>
@@ -270,12 +270,12 @@
             <div class="flex justify-between items-center">
               <span class="font-medium text-gray-900 dark:text-white">{{ showRValue ? 'Total R for day:' : 'Total for day:' }}</span>
               <span class="font-bold text-lg" :class="selectedDayTotal >= 0 ? 'text-green-600' : 'text-red-600'">
-                {{ showRValue ? formatRValue(selectedDayTotalRValue) : '$' + formatNumber(selectedDayTotalPnl) }}
+                {{ showRValue ? formatRValue(selectedDayTotalRValue) : '$' + formatCalendarCurrency(selectedDayTotalPnl) }}
               </span>
             </div>
             <div v-if="selectedDayRiskTradeCount > 0" class="mt-2 flex justify-between items-center text-sm text-gray-500 dark:text-gray-400">
               <span>Avg initial risk</span>
-              <span>${{ formatNumber(selectedDayAvgRiskAmount) }} across {{ selectedDayRiskTradeCount }} {{ selectedDayRiskTradeCount === 1 ? 'trade' : 'trades' }}</span>
+              <span>${{ formatCalendarCurrency(selectedDayAvgRiskAmount) }} across {{ selectedDayRiskTradeCount }} {{ selectedDayRiskTradeCount === 1 ? 'trade' : 'trades' }}</span>
             </div>
           </div>
         </div>
@@ -661,6 +661,30 @@ function formatNumber(num, decimals = 2) {
     minimumFractionDigits: decimals,
     maximumFractionDigits: decimals
   }).format(num || 0)
+}
+
+function getCalendarCurrencyDecimals(num) {
+  const absoluteValue = Math.abs(parseFloat(num) || 0)
+
+  if (absoluteValue < 100) {
+    return 2
+  }
+
+  if (absoluteValue < 1000) {
+    return 1
+  }
+
+  return 0
+}
+
+function formatCalendarCurrency(num) {
+  const value = parseFloat(num) || 0
+  const decimals = getCalendarCurrencyDecimals(value)
+
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: decimals
+  }).format(value)
 }
 
 function formatRValue(num, decimals = 2) {
