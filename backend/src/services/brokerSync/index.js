@@ -72,7 +72,8 @@ class BrokerSyncService {
           result = await bitunixService.syncTrades(connection, {
             startDate,
             endDate,
-            syncLogId: syncLog.id
+            syncLogId: syncLog.id,
+            syncType
           });
           break;
 
@@ -87,10 +88,12 @@ class BrokerSyncService {
 
       // Update sync log with results
       await BrokerConnection.updateSyncLog(syncLog.id, 'completed', {
+        tradesFetched: result.tradesFetched,
         tradesImported: syncedTradeCount,
         tradesSkipped: result.skipped,
         tradesFailed: result.failed,
-        duplicatesDetected: result.duplicates
+        duplicatesDetected: result.duplicates,
+        syncDetails: result.syncDetails
       });
 
       // Update connection status

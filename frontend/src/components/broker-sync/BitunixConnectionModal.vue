@@ -80,7 +80,7 @@
                   Auto-Sync
                 </label>
                 <p class="text-sm text-gray-500 dark:text-gray-400">
-                  Automatically sync Bitunix trades daily
+                  Automatically sync Bitunix trades on a schedule
                 </p>
               </div>
               <button
@@ -101,6 +101,23 @@
             </div>
 
             <div v-if="form.auto_sync_enabled">
+              <label for="sync_frequency" class="label">Sync Frequency</label>
+              <select
+                id="sync_frequency"
+                v-model="form.sync_frequency"
+                class="input"
+              >
+                <option value="every_10_minutes">Every 10 minutes</option>
+                <option value="hourly">Every hour</option>
+                <option value="every_4_hours">Every 4 hours</option>
+                <option value="every_6_hours">Every 6 hours</option>
+                <option value="every_12_hours">Every 12 hours</option>
+                <option value="daily">Daily</option>
+                <option value="manual">Manual only</option>
+              </select>
+            </div>
+
+            <div v-if="form.auto_sync_enabled && form.sync_frequency === 'daily'">
               <label for="sync_time" class="label">Sync Time</label>
               <input
                 id="sync_time"
@@ -154,7 +171,7 @@ const form = ref({
   api_secret: '',
   margin_coin: 'USDT',
   auto_sync_enabled: true,
-  sync_frequency: 'daily',
+  sync_frequency: 'every_10_minutes',
   sync_time: '06:00'
 })
 

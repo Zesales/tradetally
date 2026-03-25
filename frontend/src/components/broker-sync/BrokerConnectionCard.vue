@@ -23,7 +23,7 @@
                 {{ connection.connectionStatus }}
               </span>
               <span v-if="connection.autoSyncEnabled" class="text-xs text-gray-500 dark:text-gray-400">
-                Auto-sync {{ connection.syncFrequency }}
+                Auto-sync {{ formatSyncFrequency(connection.syncFrequency) }}
               </span>
             </div>
           </div>
@@ -194,6 +194,21 @@ function formatDate(date) {
   }
 
   return d.toLocaleDateString()
+}
+
+function formatSyncFrequency(syncFrequency) {
+  switch (syncFrequency) {
+    case 'every_10_minutes':
+      return 'every 10 minutes'
+    case 'every_4_hours':
+      return 'every 4 hours'
+    case 'every_6_hours':
+      return 'every 6 hours'
+    case 'every_12_hours':
+      return 'every 12 hours'
+    default:
+      return syncFrequency
+  }
 }
 
 // Close menu when clicking outside

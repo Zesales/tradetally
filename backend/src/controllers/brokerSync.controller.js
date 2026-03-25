@@ -229,7 +229,7 @@ const brokerSyncController = {
       const normalizedApiSecret = api_secret;
       const normalizedMarginCoinInput = margin_coin || 'USDT';
       const normalizedAutoSyncEnabled = auto_sync_enabled ?? false;
-      const normalizedSyncFrequency = sync_frequency || 'daily';
+      const normalizedSyncFrequency = sync_frequency || 'every_10_minutes';
       const normalizedSyncTime = sync_time || '06:00:00';
 
       if (!normalizedApiKey || !normalizedApiSecret) {

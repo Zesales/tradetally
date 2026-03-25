@@ -213,6 +213,25 @@ class BrokerConnection {
   }
 
   /**
+   * Update persisted Bitunix light-sync snapshot state
+   */
+  static async updateBitunixLightSyncState(connectionId, { positionsHash, checkedAt = new Date() } = {}) {
+    const query = `
+      UPDATE broker_connections
+      SET bitunix_last_positions_hash = $2,
+          bitunix_last_positions_checked_at = $3,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1
+      RETURNING *
+    `;
+
+    const result = await db.query(query, [connectionId, positionsHash || null, checkedAt]);
+    if (result.rows.length === 0) return null;
+
+    return this.formatConnection(result.rows[0], false);
+  }
+
+  /**
    * Update connection settings
    */
   static async update(connectionId, updates) {
@@ -301,7 +320,7 @@ class BrokerConnection {
 
   /**
    * Calculate next scheduled sync time based on frequency
-   * Supported frequencies: manual, hourly, every_4_hours, every_6_hours, every_12_hours, daily
+   * Supported frequencies: manual, every_10_minutes, hourly, every_4_hours, every_6_hours, every_12_hours, daily
    */
   static calculateNextSync(syncFrequency, syncTime) {
     if (syncFrequency === 'manual') return null;
@@ -310,6 +329,12 @@ class BrokerConnection {
 
     // For interval-based frequencies, calculate next sync from now
     switch (syncFrequency) {
+      case 'every_10_minutes': {
+        const next = new Date(now);
+        next.setSeconds(0, 0);
+        next.setMinutes(Math.floor(next.getMinutes() / 10) * 10 + 10);
+        return next;
+      }
       case 'hourly': {
         const next = new Date(now);
         next.setHours(next.getHours() + 1);
@@ -410,6 +435,8 @@ class BrokerConnection {
       }
     } else if (row.broker_type === 'bitunix') {
       connection.bitunixMarginCoin = row.bitunix_margin_coin || 'USDT';
+      connection.bitunixLastPositionsHash = row.bitunix_last_positions_hash || null;
+      connection.bitunixLastPositionsCheckedAt = row.bitunix_last_positions_checked_at || null;
       if (includeCredentials) {
         if (row.bitunix_api_key) {
           connection.bitunixApiKey = encryptionService.decrypt(row.bitunix_api_key);

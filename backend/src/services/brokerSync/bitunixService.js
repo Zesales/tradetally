@@ -7,6 +7,7 @@
  * - Pending positions: GET /api/v1/futures/position/get_pending_positions
  */
 
+const crypto = require('crypto');
 const Trade = require('../../models/Trade');
 const BrokerConnection = require('../../models/BrokerConnection');
 const AnalyticsCache = require('../analyticsCache');
@@ -613,24 +614,154 @@ class BitunixService {
     return { imported, updated, skipped, failed, duplicates };
   }
 
+  buildLightSyncSnapshot({ pendingPositions = [], pendingOrders = [], pendingTpSlOrders = [] } = {}) {
+    const normalizedPositions = [...pendingPositions]
+      .filter(position => position?.positionId && position?.symbol)
+      .map(position => ({
+        positionId: String(position.positionId),
+        symbol: this.tradeParser.normalizeSymbol(position.symbol),
+        side: this.tradeParser.normalizePositionSide(position.side),
+        quantity: this.tradeParser.parseNumber(position.qty) || 0,
+        maxQuantity: this.tradeParser.parseNumber(position.maxQty) || 0,
+        entryPrice: this.tradeParser.parseNumber(position.avgOpenPrice),
+        leverage: this.tradeParser.parseNumber(position.leverage),
+        createdAt: Number(position.ctime) || null
+      }))
+      .sort((a, b) => a.positionId.localeCompare(b.positionId));
+
+    const normalizedOrders = pendingOrders
+      .map(order => this.tradeParser.parsePendingOrder(order))
+      .filter(Boolean)
+      .map(order => ({
+        orderId: order.orderId,
+        symbol: order.symbol,
+        side: order.side,
+        quantity: order.quantity || 0,
+        filledQuantity: order.filledQuantity || 0,
+        price: order.price,
+        reduceOnly: Boolean(order.reduceOnly),
+        tpPrice: order.tpPrice,
+        slPrice: order.slPrice
+      }))
+      .sort((a, b) => a.orderId.localeCompare(b.orderId));
+
+    const normalizedTpSlOrders = pendingTpSlOrders
+      .map(order => this.tradeParser.parsePendingTpSlOrder(order))
+      .filter(Boolean)
+      .map(order => ({
+        id: order.id,
+        positionId: order.positionId,
+        symbol: order.symbol,
+        tpPrice: order.tpPrice,
+        tpQty: order.tpQty || 0,
+        slPrice: order.slPrice,
+        slQty: order.slQty || 0
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+
+    const snapshotPayload = {
+      positions: normalizedPositions,
+      pendingOrders: normalizedOrders,
+      pendingTpSlOrders: normalizedTpSlOrders
+    };
+    const serialized = JSON.stringify(snapshotPayload);
+    const hash = crypto.createHash('sha256').update(serialized).digest('hex');
+
+    return {
+      hash,
+      payload: snapshotPayload,
+      counts: {
+        pendingPositions: normalizedPositions.length,
+        pendingOrders: normalizedOrders.length,
+        pendingTpSlOrders: normalizedTpSlOrders.length
+      }
+    };
+  }
+
+  async getLightSyncSnapshot(connection) {
+    const [pendingPositions, pendingOrders, pendingTpSlOrders] = await Promise.all([
+      this.apiClient.getPendingPositions(
+        connection.bitunixApiKey,
+        connection.bitunixApiSecret
+      ),
+      this.apiClient.getPendingOrders(
+        connection.bitunixApiKey,
+        connection.bitunixApiSecret
+      ),
+      this.apiClient.getPendingTpSlOrders(
+        connection.bitunixApiKey,
+        connection.bitunixApiSecret
+      )
+    ]);
+
+    return {
+      pendingPositions,
+      pendingOrders,
+      pendingTpSlOrders,
+      snapshot: this.buildLightSyncSnapshot({
+        pendingPositions,
+        pendingOrders,
+        pendingTpSlOrders
+      })
+    };
+  }
+
   async syncTrades(connection, options = {}) {
-    const { startDate, endDate, syncLogId } = options;
+    const { startDate, endDate, syncLogId, syncType = 'manual' } = options;
     const marginCoin = String(connection.bitunixMarginCoin || DEFAULT_MARGIN_COIN).toUpperCase();
 
     if (syncLogId) {
       await BrokerConnection.updateSyncLog(syncLogId, 'fetching');
     }
 
-    const pendingPositions = await this.apiClient.getPendingPositions(
-      connection.bitunixApiKey,
-      connection.bitunixApiSecret
-    );
+    let pendingPositions;
+    let pendingOrders;
+    let pendingTpSlOrders;
+    let currentSnapshot = null;
+
+    if (syncType === 'scheduled') {
+      const lightSnapshot = await this.getLightSyncSnapshot(connection);
+      pendingPositions = lightSnapshot.pendingPositions;
+      pendingOrders = lightSnapshot.pendingOrders;
+      pendingTpSlOrders = lightSnapshot.pendingTpSlOrders;
+      currentSnapshot = lightSnapshot.snapshot;
+
+      const previousHash = connection.bitunixLastPositionsHash || null;
+      const hasSnapshotHistory = Boolean(previousHash);
+      const hasChanges = !hasSnapshotHistory || previousHash !== currentSnapshot.hash;
+
+      if (!hasChanges) {
+        await BrokerConnection.updateBitunixLightSyncState(connection.id, {
+          positionsHash: currentSnapshot.hash
+        });
+
+        return {
+          imported: 0,
+          updated: 0,
+          skipped: 0,
+          failed: 0,
+          duplicates: 0,
+          tradesFetched: 0,
+          syncDetails: {
+            mode: 'light',
+            fullSyncTriggered: false,
+            reason: 'no_pending_snapshot_changes',
+            ...currentSnapshot.counts
+          }
+        };
+      }
+    } else {
+      pendingPositions = await this.apiClient.getPendingPositions(
+        connection.bitunixApiKey,
+        connection.bitunixApiSecret
+      );
+    }
 
     const [
       { effectiveHistoryStartDate, historyTrades },
       historyPositions,
-      pendingOrders,
-      pendingTpSlOrders,
+      resolvedPendingOrders,
+      resolvedPendingTpSlOrders,
       historyOrders,
       historyTpSlOrders
     ] = await Promise.all([
@@ -641,8 +772,12 @@ class BitunixService {
         { startDate, endDate }
       ),
       this.apiClient.getHistoryPositions(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate }),
-      this.apiClient.getPendingOrders(connection.bitunixApiKey, connection.bitunixApiSecret),
-      this.apiClient.getPendingTpSlOrders(connection.bitunixApiKey, connection.bitunixApiSecret),
+      pendingOrders
+        ? Promise.resolve(pendingOrders)
+        : this.apiClient.getPendingOrders(connection.bitunixApiKey, connection.bitunixApiSecret),
+      pendingTpSlOrders
+        ? Promise.resolve(pendingTpSlOrders)
+        : this.apiClient.getPendingTpSlOrders(connection.bitunixApiKey, connection.bitunixApiSecret),
       this.safeOptionalFetch('history orders', () =>
         this.apiClient.getHistoryOrders(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate })
       ),
@@ -650,6 +785,17 @@ class BitunixService {
         this.apiClient.getHistoryTpSlOrders(connection.bitunixApiKey, connection.bitunixApiSecret, { startDate, endDate })
       )
     ]);
+
+    pendingOrders = resolvedPendingOrders;
+    pendingTpSlOrders = resolvedPendingTpSlOrders;
+
+    if (!currentSnapshot) {
+      currentSnapshot = this.buildLightSyncSnapshot({
+        pendingPositions,
+        pendingOrders,
+        pendingTpSlOrders
+      });
+    }
 
     let finalPendingPositions = pendingPositions;
     let finalHistoryTrades = historyTrades;
@@ -691,7 +837,26 @@ class BitunixService {
       });
     }
 
-    return this.importTrades(connection.userId, connection.id, trades);
+    const importResult = await this.importTrades(connection.userId, connection.id, trades);
+
+    if (currentSnapshot) {
+      await BrokerConnection.updateBitunixLightSyncState(connection.id, {
+        positionsHash: currentSnapshot.hash
+      });
+    }
+
+    return {
+      ...importResult,
+      tradesFetched: trades.length,
+      syncDetails: currentSnapshot
+        ? {
+            mode: 'light',
+            fullSyncTriggered: true,
+            reason: 'pending_snapshot_changes_detected',
+            ...currentSnapshot.counts
+          }
+        : undefined
+    };
   }
 }
 

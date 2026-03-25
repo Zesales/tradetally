@@ -114,6 +114,9 @@
                             v-model="form.syncFrequency"
                             class="input"
                         >
+                            <option value="every_10_minutes">
+                                Every 10 minutes
+                            </option>
                             <option value="hourly">Every hour</option>
                             <option value="every_4_hours">Every 4 hours</option>
                             <option value="every_6_hours">Every 6 hours</option>

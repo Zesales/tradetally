@@ -2,13 +2,13 @@
  * Broker Sync Scheduler
  * Handles automatic scheduled syncing of broker connections
  *
- * Runs every 15 minutes to check for connections due for sync
+ * Runs every 5 minutes to check for connections due for sync
  */
 
 const BrokerConnection = require('../../models/BrokerConnection');
 const brokerSyncService = require('./index');
 
-const SCHEDULER_INTERVAL = 15 * 60 * 1000; // 15 minutes
+const SCHEDULER_INTERVAL = 5 * 60 * 1000; // 5 minutes
 const MAX_CONCURRENT_SYNCS = 3;
 
 class BrokerSyncScheduler {
