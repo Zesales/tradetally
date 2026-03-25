@@ -52,6 +52,39 @@ function invalidateInMemoryCache(userId) {
   console.log(`[BROKER-SYNC] Invalidated ${cacheKeys.length} in-memory analytics cache entries for user ${userId}`);
 }
 
+async function validateExistingConnection(connection) {
+  if (connection.brokerType === 'ibkr') {
+    return ibkrService.validateCredentials(
+      connection.ibkrFlexToken,
+      connection.ibkrFlexQueryId
+    );
+  }
+
+  if (connection.brokerType === 'schwab') {
+    const { accessToken, needsReauth } = await schwabService.ensureValidToken(connection);
+    if (needsReauth) {
+      return { valid: false, message: 'Schwab authentication expired. Please re-connect your account.' };
+    }
+
+    try {
+      await schwabService.getAccounts(accessToken);
+      return { valid: true, message: 'Schwab connection is valid' };
+    } catch (error) {
+      return { valid: false, message: `Schwab connection test failed: ${error.message}` };
+    }
+  }
+
+  if (connection.brokerType === 'bitunix') {
+    return bitunixService.validateCredentials(
+      connection.bitunixApiKey,
+      connection.bitunixApiSecret,
+      connection.bitunixMarginCoin
+    );
+  }
+
+  return { valid: false, message: `Unknown broker type: ${connection.brokerType}` };
+}
+
 const brokerSyncController = {
   /**
    * Get all broker connections for the current user
@@ -502,12 +535,19 @@ const brokerSyncController = {
         });
       }
 
-      // Check connection status
+      // If the connection is in an error-like state, try to re-validate it before blocking manual retry.
       if (connection.connectionStatus !== 'active') {
-        return res.status(400).json({
-          success: false,
-          error: `Cannot sync: connection status is ${connection.connectionStatus}`
-        });
+        const validation = await validateExistingConnection(connection);
+
+        if (!validation.valid) {
+          await BrokerConnection.updateStatus(id, 'error', validation.message);
+          return res.status(400).json({
+            success: false,
+            error: validation.message
+          });
+        }
+
+        await BrokerConnection.updateStatus(id, 'active', 'Connection revalidated successfully before manual sync');
       }
 
       console.log(`[BROKER-SYNC] Starting manual sync for connection ${id}`);
@@ -606,34 +646,7 @@ const brokerSyncController = {
         });
       }
 
-      let testResult;
-
-      if (connection.brokerType === 'ibkr') {
-        testResult = await ibkrService.validateCredentials(
-          connection.ibkrFlexToken,
-          connection.ibkrFlexQueryId
-        );
-      } else if (connection.brokerType === 'schwab') {
-        // Test Schwab connection by checking token validity
-        const { accessToken, needsReauth } = await schwabService.ensureValidToken(connection);
-        if (needsReauth) {
-          testResult = { valid: false, message: 'Schwab authentication expired. Please re-connect your account.' };
-        } else {
-          // Try to fetch accounts to verify token works
-          try {
-            await schwabService.getAccounts(accessToken);
-            testResult = { valid: true, message: 'Schwab connection is valid' };
-          } catch (error) {
-            testResult = { valid: false, message: `Schwab connection test failed: ${error.message}` };
-          }
-        }
-      } else if (connection.brokerType === 'bitunix') {
-        testResult = await bitunixService.validateCredentials(
-          connection.bitunixApiKey,
-          connection.bitunixApiSecret,
-          connection.bitunixMarginCoin
-        );
-      }
+      const testResult = await validateExistingConnection(connection);
 
       if (testResult.valid) {
         await BrokerConnection.updateStatus(id, 'active', 'Connection test successful');
