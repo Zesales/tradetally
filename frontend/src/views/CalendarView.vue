@@ -196,13 +196,13 @@
     </div>
 
     <!-- Day Trades Modal -->
-    <div v-if="selectedDay" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+    <div v-if="selectedDay" class="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-gray-600 bg-opacity-50 p-4 sm:p-6">
       <div
-        class="relative mx-auto p-5 border shadow-lg rounded-md bg-white dark:bg-gray-800 transition-all duration-300"
+        class="relative flex max-h-[calc(100vh-2rem)] w-full flex-col rounded-md border bg-white p-5 shadow-lg transition-all duration-300 dark:bg-gray-800 sm:max-h-[calc(100vh-3rem)]"
         :class="isModalExpanded
-          ? 'top-4 w-full max-w-6xl h-[calc(100vh-2rem)]'
-          : 'top-20 w-full max-w-2xl'">
-        <div class="h-full flex flex-col">
+          ? 'max-w-6xl'
+          : 'max-w-2xl'">
+        <div class="flex min-h-0 flex-1 flex-col">
           <div class="flex justify-between items-center mb-4">
             <h3 class="heading-card">
               Trades for {{ format(selectedDay.date, 'MMMM d, yyyy') }}
@@ -221,10 +221,12 @@
             </div>
           </div>
 
-          <div class="space-y-3 overflow-y-auto flex-1" :class="isModalExpanded ? '' : 'max-h-96'">
-            <div v-for="(contrib, index) in selectedDayContributions" :key="contrib.trade_id + '-' + index"
-              class="p-4 border border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-              @click="navigateToTrade(contrib.trade_id)">
+          <div
+            class="calendar-modal-scroll min-h-0 flex-1 space-y-3 overflow-y-scroll pr-2">
+            <a v-for="(contrib, index) in selectedDayContributions" :key="contrib.trade_id + '-' + index"
+              :href="getTradeHref(contrib.trade_id)"
+              class="block p-4 border border-gray-200 dark:border-gray-700 rounded-lg cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+              @click.prevent="navigateToTrade(contrib.trade_id)">
               <div class="flex justify-between items-start">
                 <div>
                   <div class="flex items-center space-x-2 flex-wrap gap-y-1">
@@ -263,7 +265,7 @@
                   </p>
                 </div>
               </div>
-            </div>
+            </a>
           </div>
 
           <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
@@ -677,6 +679,10 @@ function navigateToTrade(tradeId) {
   router.push(`/trades/${tradeId}`)
 }
 
+function getTradeHref(tradeId) {
+  return router.resolve(`/trades/${tradeId}`).href
+}
+
 async function fetchCalendarData() {
   loading.value = true
   try {
@@ -797,3 +803,29 @@ watch(selectedAccount, () => {
   fetchCalendarData()
 })
 </script>
+
+<style scoped>
+.calendar-modal-scroll {
+  overflow-y: scroll;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(107 114 128) rgb(31 41 55 / 0.35);
+}
+
+.calendar-modal-scroll::-webkit-scrollbar {
+  width: 8px;
+}
+
+.calendar-modal-scroll::-webkit-scrollbar-track {
+  background: rgb(31 41 55 / 0.2);
+  border-radius: 9999px;
+}
+
+.calendar-modal-scroll::-webkit-scrollbar-thumb {
+  background: rgb(107 114 128);
+  border-radius: 9999px;
+}
+
+.calendar-modal-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgb(156 163 175);
+}
+</style>
