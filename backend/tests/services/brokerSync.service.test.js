@@ -11,7 +11,11 @@ jest.mock('../../src/models/Trade', () => ({
 }));
 
 jest.mock('../../src/models/BrokerConnection', () => ({
+  findById: jest.fn(),
+  createSyncLog: jest.fn(),
   updateSyncLog: jest.fn(),
+  updateAfterSync: jest.fn(),
+  calculateNextSync: jest.fn(),
   updateSchwabTokens: jest.fn(),
   updateStatus: jest.fn()
 }));
@@ -30,7 +34,9 @@ jest.mock('../../src/config/database', () => ({
 }));
 
 const Trade = require('../../src/models/Trade');
+const BrokerConnection = require('../../src/models/BrokerConnection');
 const db = require('../../src/config/database');
+const brokerSyncService = require('../../src/services/brokerSync');
 const ibkrService = require('../../src/services/brokerSync/ibkrService');
 const schwabService = require('../../src/services/brokerSync/schwabService');
 const bitunixService = require('../../src/services/brokerSync/bitunixService');
@@ -291,6 +297,60 @@ describe('broker sync duplicate protection', () => {
           }
         ]
       ])
+    );
+  });
+
+  test('scheduled Bitunix no-op sync preserves the previous visible imported count on the connection', async () => {
+    const connection = {
+      id: 'conn-1',
+      userId: 'user-1',
+      brokerType: 'bitunix',
+      connectionStatus: 'active',
+      autoSyncEnabled: true,
+      syncFrequency: 'daily',
+      syncTime: '06:00:00',
+      lastSyncTradesImported: 17,
+      lastSyncTradesSkipped: 3
+    };
+
+    BrokerConnection.findById.mockResolvedValueOnce(connection);
+    BrokerConnection.createSyncLog.mockResolvedValueOnce({ id: 'log-1' });
+    BrokerConnection.updateSyncLog.mockResolvedValue({});
+    BrokerConnection.updateAfterSync.mockResolvedValue({});
+    BrokerConnection.calculateNextSync.mockReturnValue(new Date('2026-03-30T06:00:00Z'));
+
+    jest.spyOn(bitunixService, 'syncTrades').mockResolvedValueOnce({
+      imported: 0,
+      updated: 0,
+      skipped: 0,
+      failed: 0,
+      duplicates: 0,
+      tradesFetched: 0,
+      syncDetails: {
+        mode: 'light',
+        fullSyncTriggered: false,
+        reason: 'no_pending_snapshot_changes'
+      }
+    });
+    jest.spyOn(brokerSyncService, 'closeExpiredOptions').mockResolvedValueOnce(0);
+
+    const result = await brokerSyncService.syncConnection('conn-1', {
+      syncType: 'scheduled'
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      imported: 0,
+      tradesImported: 0
+    });
+    expect(BrokerConnection.updateSyncLog).toHaveBeenLastCalledWith('log-1', 'completed', expect.objectContaining({
+      tradesImported: 0
+    }));
+    expect(BrokerConnection.updateAfterSync).toHaveBeenCalledWith(
+      'conn-1',
+      17,
+      3,
+      expect.any(Date)
     );
   });
 });

@@ -107,7 +107,7 @@
                 v-model="form.sync_frequency"
                 class="input"
               >
-                <option value="every_10_minutes">Every 10 minutes</option>
+                <option value="every_5_minutes">Every 5 minutes</option>
                 <option value="hourly">Every hour</option>
                 <option value="every_4_hours">Every 4 hours</option>
                 <option value="every_6_hours">Every 6 hours</option>
@@ -171,7 +171,7 @@ const form = ref({
   api_secret: '',
   margin_coin: 'USDT',
   auto_sync_enabled: true,
-  sync_frequency: 'every_10_minutes',
+  sync_frequency: 'every_5_minutes',
   sync_time: '06:00'
 })
 

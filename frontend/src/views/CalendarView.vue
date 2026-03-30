@@ -287,7 +287,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import OnboardingCard from '@/components/onboarding/OnboardingCard.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -334,6 +334,8 @@ const selectedDay = ref(null)
 const expandedMonthContainer = ref(null)
 const isModalExpanded = ref(false)
 const showRValue = ref(false)
+const AUTO_REFRESH_INTERVAL_MS = 4 * 60 * 1000
+let autoRefreshInterval = null
 
 function toggleRValue() {
   showRValue.value = !showRValue.value
@@ -717,6 +719,14 @@ async function fetchCalendarData() {
   }
 }
 
+async function refreshCalendarData() {
+  await fetchCalendarData()
+
+  if (selectedDay.value?.date) {
+    await fetchTradesForDate(selectedDay.value.date)
+  }
+}
+
 // Fetch trades for a specific date (lazy loading for modal)
 async function fetchTradesForDate(date) {
   if (!date) return []
@@ -771,6 +781,17 @@ onMounted(() => {
   }
 
   fetchCalendarData()
+
+  autoRefreshInterval = setInterval(() => {
+    refreshCalendarData()
+  }, AUTO_REFRESH_INTERVAL_MS)
+})
+
+onUnmounted(() => {
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval)
+    autoRefreshInterval = null
+  }
 })
 
 watch(currentYear, () => {

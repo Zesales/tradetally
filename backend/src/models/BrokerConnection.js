@@ -320,7 +320,7 @@ class BrokerConnection {
 
   /**
    * Calculate next scheduled sync time based on frequency
-   * Supported frequencies: manual, every_10_minutes, hourly, every_4_hours, every_6_hours, every_12_hours, daily
+   * Supported frequencies: manual, every_5_minutes, hourly, every_4_hours, every_6_hours, every_12_hours, daily
    */
   static calculateNextSync(syncFrequency, syncTime) {
     if (syncFrequency === 'manual') return null;
@@ -329,10 +329,11 @@ class BrokerConnection {
 
     // For interval-based frequencies, calculate next sync from now
     switch (syncFrequency) {
-      case 'every_10_minutes': {
+      case 'every_10_minutes':
+      case 'every_5_minutes': {
         const next = new Date(now);
         next.setSeconds(0, 0);
-        next.setMinutes(Math.floor(next.getMinutes() / 10) * 10 + 10);
+        next.setMinutes(Math.floor(next.getMinutes() / 5) * 5 + 5);
         return next;
       }
       case 'hourly': {
@@ -399,7 +400,7 @@ class BrokerConnection {
       brokerType: row.broker_type,
       connectionStatus: row.connection_status,
       autoSyncEnabled: row.auto_sync_enabled,
-      syncFrequency: row.sync_frequency,
+      syncFrequency: row.sync_frequency === 'every_10_minutes' ? 'every_5_minutes' : row.sync_frequency,
       syncTime: row.sync_time,
       lastSyncAt: row.last_sync_at,
       lastSyncStatus: row.last_sync_status,

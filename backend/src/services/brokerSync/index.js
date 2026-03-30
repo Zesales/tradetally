@@ -85,6 +85,16 @@ class BrokerSyncService {
       const expiredClosed = await this.closeExpiredOptions(connection.userId);
       result.expiredClosed = expiredClosed;
       const syncedTradeCount = (result.imported || 0) + (result.updated || 0) + expiredClosed;
+      const preservePreviousVisibleCount =
+        syncType === 'scheduled' &&
+        syncedTradeCount === 0 &&
+        result.syncDetails?.reason === 'no_pending_snapshot_changes';
+      const visibleTradesImported = preservePreviousVisibleCount
+        ? connection.lastSyncTradesImported
+        : syncedTradeCount;
+      const visibleTradesSkipped = preservePreviousVisibleCount
+        ? connection.lastSyncTradesSkipped
+        : result.skipped;
 
       // Update sync log with results
       await BrokerConnection.updateSyncLog(syncLog.id, 'completed', {
@@ -103,8 +113,8 @@ class BrokerSyncService {
 
       await BrokerConnection.updateAfterSync(
         connectionId,
-        syncedTradeCount,
-        result.skipped,
+        visibleTradesImported,
+        visibleTradesSkipped,
         nextSync
       );
 
@@ -113,6 +123,7 @@ class BrokerSyncService {
       return {
         success: true,
         syncLogId: syncLog.id,
+        tradesImported: syncedTradeCount,
         ...result
       };
     } catch (error) {

@@ -64,7 +64,7 @@ class BrokerSyncScheduler {
               brokerType: connection.brokerType,
               userId: connection.userId,
               success: result.value.success,
-              imported: result.value.imported || 0,
+              imported: result.value.tradesImported ?? result.value.imported ?? 0,
               duplicates: result.value.duplicates || 0,
               error: result.value.error
             });

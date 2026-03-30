@@ -151,7 +151,7 @@ export const useBrokerSyncStore = defineStore('brokerSync', () => {
         api_secret: credentials.api_secret,
         margin_coin: credentials.margin_coin || 'USDT',
         auto_sync_enabled: credentials.auto_sync_enabled ?? false,
-        sync_frequency: credentials.sync_frequency || 'daily',
+        sync_frequency: credentials.sync_frequency || 'every_5_minutes',
         sync_time: credentials.sync_time || '06:00:00'
       })
 

@@ -199,7 +199,8 @@ function formatDate(date) {
 function formatSyncFrequency(syncFrequency) {
   switch (syncFrequency) {
     case 'every_10_minutes':
-      return 'every 10 minutes'
+    case 'every_5_minutes':
+      return 'every 5 minutes'
     case 'every_4_hours':
       return 'every 4 hours'
     case 'every_6_hours':

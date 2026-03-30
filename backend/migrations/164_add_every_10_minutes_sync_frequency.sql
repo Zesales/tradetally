@@ -1,4 +1,8 @@
--- Add 10-minute broker sync frequency for existing databases
+-- Add 5-minute broker sync frequency for existing databases
+
+UPDATE broker_connections
+SET sync_frequency = 'every_5_minutes'
+WHERE sync_frequency = 'every_10_minutes';
 
 ALTER TABLE broker_connections
 DROP CONSTRAINT IF EXISTS broker_connections_sync_frequency_check;
@@ -8,7 +12,7 @@ ADD CONSTRAINT broker_connections_sync_frequency_check
 CHECK (
   sync_frequency IN (
     'manual',
-    'every_10_minutes',
+    'every_5_minutes',
     'hourly',
     'every_4_hours',
     'every_6_hours',
@@ -17,4 +21,4 @@ CHECK (
   )
 );
 
-COMMENT ON COLUMN broker_connections.sync_frequency IS 'Sync frequency: manual, every_10_minutes, hourly, every_4_hours, every_6_hours, every_12_hours, or daily';
+COMMENT ON COLUMN broker_connections.sync_frequency IS 'Sync frequency: manual, every_5_minutes, hourly, every_4_hours, every_6_hours, every_12_hours, or daily';
